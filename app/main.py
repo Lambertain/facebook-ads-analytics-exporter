@@ -464,61 +464,135 @@ async def get_students(request: Request, start_date: str = None, end_date: str =
 
 @app.post("/api/download-excel")
 async def download_excel(payload: Dict[str, Any]):
+    """
+    Експорт даних у Excel з підтримкою різних типів даних.
+
+    Args:
+        data_type: "ads" | "students" | "teachers"
+        start_date: YYYY-MM-DD
+        end_date: YYYY-MM-DD
+    """
     from fastapi.responses import FileResponse
     import tempfile
-    import openpyxl
     from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
 
+    data_type = payload.get("data_type", "ads")
     start_date = payload.get("start_date")
     end_date = payload.get("end_date")
 
-    # Получаем данные из Meta Ads
-    meta_token = os.getenv("META_ACCESS_TOKEN")
-    ad_account_id = os.getenv("META_AD_ACCOUNT_ID")
-
-    if not meta_token or not ad_account_id:
-        return JSONResponse({"error": "META credentials не налаштовані"}, status_code=400)
-
     try:
-        # Fetch data
-        insights = meta_conn.fetch_insights(
-            ad_account_id=ad_account_id,
-            access_token=meta_token,
-            date_from=start_date,
-            date_to=end_date,
-            level="ad"
-        )
-
-        # Create workbook
         wb = Workbook()
         ws = wb.active
-        ws.title = "Creatives"
 
-        # Headers
-        headers = ["date_start", "date_stop", "campaign_id", "campaign_name",
-                   "adset_id", "adset_name", "ad_id", "ad_name",
-                   "impressions", "clicks", "spend", "cpc", "cpm", "ctr"]
-        ws.append(headers)
+        if data_type == "students":
+            ws.title = "Students"
 
-        # Data rows
-        for insight in insights:
-            row = [
-                insight.get("date_start", ""),
-                insight.get("date_stop", ""),
-                insight.get("campaign_id", ""),
-                insight.get("campaign_name", ""),
-                insight.get("adset_id", ""),
-                insight.get("adset_name", ""),
-                insight.get("ad_id", ""),
-                insight.get("ad_name", ""),
-                insight.get("impressions", 0),
-                insight.get("clicks", 0),
-                insight.get("spend", 0),
-                insight.get("cpc", 0),
-                insight.get("cpm", 0),
-                insight.get("ctr", 0),
-            ]
-            ws.append(row)
+            # Отримуємо дані студентів через існуючий endpoint
+            excel_path = os.getenv("EXCEL_STUDENTS_PATH")
+            if not excel_path or not os.path.exists(excel_path):
+                return JSONResponse({"error": "Файл студентів не знайдено"}, status_code=404)
+
+            # Читаємо з Excel
+            mapping = load_mapping()
+            sheet_name = mapping.get("students", {}).get("sheet_name", "Students")
+
+            source_wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+            if sheet_name not in source_wb.sheetnames:
+                return JSONResponse({"error": f"Аркуш '{sheet_name}' не знайдено"}, status_code=404)
+
+            source_ws = source_wb[sheet_name]
+
+            # Копіюємо всі дані з форматуванням
+            for row_idx, row in enumerate(source_ws.iter_rows(values_only=False), 1):
+                for col_idx, cell in enumerate(row, 1):
+                    target_cell = ws.cell(row=row_idx, column=col_idx)
+                    target_cell.value = cell.value
+
+                    # Форматування заголовків
+                    if row_idx == 1:
+                        target_cell.font = Font(bold=True, size=11)
+                        target_cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+                        target_cell.font = Font(bold=True, color="FFFFFF", size=11)
+                        target_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+            # Автоширина столбцов
+            for column in ws.columns:
+                max_length = 0
+                column_letter = get_column_letter(column[0].column)
+                for cell in column:
+                    try:
+                        if cell.value:
+                            max_length = max(max_length, len(str(cell.value)))
+                    except:
+                        pass
+                adjusted_width = min(max_length + 2, 50)
+                ws.column_dimensions[column_letter].width = adjusted_width
+
+            # Применяем числовые форматы для процентов и валюты
+            percent_columns = ["% цільових лідів", "% не цільових лідів", "% Встан. контакт",
+                             "% В опрацюванні (ЦА)", "% конверсія", "% архів", "% недозвон",
+                             "% Назначений пробний", "%\nПроведений пробний від загальних лідів\n(ЦА)",
+                             "%\nПроведений пробний від назначених пробних", "Конверсія з проведеного пробного в продаж"]
+
+            currency_columns = ["Витрачений бюджет в $", "Ціна / ліда", "Ціна / цільового ліда"]
+
+            # Находим индексы колонок
+            headers = [cell.value for cell in ws[1]]
+            for col_idx, header in enumerate(headers, 1):
+                if header in percent_columns:
+                    for row_idx in range(2, ws.max_row + 1):
+                        ws.cell(row=row_idx, column=col_idx).number_format = '0.00%'
+                elif header in currency_columns:
+                    for row_idx in range(2, ws.max_row + 1):
+                        ws.cell(row=row_idx, column=col_idx).number_format = '$#,##0.00'
+
+            source_wb.close()
+            filename = f"students_export_{start_date}_{end_date}.xlsx"
+
+        else:  # ads (creatives)
+            ws.title = "Creatives"
+
+            meta_token = os.getenv("META_ACCESS_TOKEN")
+            ad_account_id = os.getenv("META_AD_ACCOUNT_ID")
+
+            if not meta_token or not ad_account_id:
+                return JSONResponse({"error": "META credentials не налаштовані"}, status_code=400)
+
+            insights = meta_conn.fetch_insights(
+                ad_account_id=ad_account_id,
+                access_token=meta_token,
+                date_from=start_date,
+                date_to=end_date,
+                level="ad"
+            )
+
+            headers = ["date_start", "date_stop", "campaign_id", "campaign_name",
+                       "adset_id", "adset_name", "ad_id", "ad_name",
+                       "impressions", "clicks", "spend", "cpc", "cpm", "ctr"]
+            ws.append(headers)
+
+            for insight in insights:
+                row = [
+                    insight.get("date_start", ""),
+                    insight.get("date_stop", ""),
+                    insight.get("campaign_id", ""),
+                    insight.get("campaign_name", ""),
+                    insight.get("adset_id", ""),
+                    insight.get("adset_name", ""),
+                    insight.get("ad_id", ""),
+                    insight.get("ad_name", ""),
+                    insight.get("impressions", 0),
+                    insight.get("clicks", 0),
+                    insight.get("spend", 0),
+                    insight.get("cpc", 0),
+                    insight.get("cpm", 0),
+                    insight.get("ctr", 0),
+                ]
+                ws.append(row)
+
+            filename = f"ads_export_{start_date}_{end_date}.xlsx"
 
         # Save to temp file
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
@@ -528,7 +602,7 @@ async def download_excel(payload: Dict[str, Any]):
         return FileResponse(
             temp_file.name,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            filename=f"ecademy_export_{start_date}_{end_date}.xlsx"
+            filename=filename
         )
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

@@ -169,8 +169,8 @@ export default function App() {
     setLogs(l => [...l, 'NetHunt folders: ' + JSON.stringify(res)])
   }
 
-  async function onDownloadExcel() {
-    if (status !== 'done') {
+  async function onDownloadExcel(dataType: 'ads' | 'students' | 'teachers' = 'ads') {
+    if (status !== 'done' && dataType === 'ads') {
       setSnack('Спочатку запустіть процес і дочекайтесь завершення')
       return
     }
@@ -179,6 +179,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          data_type: dataType,
           start_date: start?.format('YYYY-MM-DD'),
           end_date: end?.format('YYYY-MM-DD')
         })
@@ -189,7 +190,8 @@ export default function App() {
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `ecademy_export_${start?.format('YYYY-MM-DD')}_${end?.format('YYYY-MM-DD')}.xlsx`
+      const filename = `${dataType}_export_${start?.format('YYYY-MM-DD')}_${end?.format('YYYY-MM-DD')}.xlsx`
+      a.download = filename
       document.body.appendChild(a)
       a.click()
       window.URL.revokeObjectURL(url)
@@ -272,7 +274,16 @@ export default function App() {
               </TableContainer>
             )}
 
-            {dataTab === 'students' && <StudentsTable />}
+            {dataTab === 'students' && (
+              <>
+                <Box sx={{ mb: 2, display: 'flex', justifyContent: 'flex-end' }}>
+                  <Button variant="outlined" color="success" onClick={() => onDownloadExcel('students')}>
+                    Завантажити Students Excel
+                  </Button>
+                </Box>
+                <StudentsTable />
+              </>
+            )}
 
             {dataTab === 'teachers' && (
               <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
