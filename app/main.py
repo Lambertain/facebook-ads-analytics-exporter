@@ -2,9 +2,12 @@ import asyncio
 import os
 import uuid
 import json
+import logging
 from datetime import datetime
 from typing import Dict, Any, List
 import openpyxl
+
+logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI, BackgroundTasks, Request, Depends
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
@@ -462,6 +465,112 @@ async def get_students(request: Request, start_date: str = None, end_date: str =
         return JSONResponse({"error": f"Помилка читання даних: {str(e)}"}, status_code=500)
 
 
+def _add_students_charts(ws):
+    """Добавляет графики для данных студентов."""
+    from openpyxl.chart import BarChart, PieChart, Reference
+    from openpyxl.chart.label import DataLabelList
+
+    if ws.max_row < 2:
+        return
+
+    headers = [cell.value for cell in ws[1]]
+
+    # График 1: Бар-чарт для цільових/нецільових лідів
+    try:
+        target_col_idx = headers.index("Цільові ліди") + 1 if "Цільові ліди" in headers else None
+        non_target_col_idx = headers.index("Не цільові ліди") + 1 if "Не цільові ліди" in headers else None
+
+        if target_col_idx and non_target_col_idx:
+            chart = BarChart()
+            chart.type = "col"
+            chart.title = "Розподіл цільових та нецільових лідів"
+            chart.y_axis.title = "Кількість лідів"
+            chart.x_axis.title = "Креатив"
+
+            data = Reference(ws, min_col=target_col_idx, min_row=1, max_row=ws.max_row, max_col=non_target_col_idx)
+            cats = Reference(ws, min_col=1, min_row=2, max_row=ws.max_row)
+            chart.add_data(data, titles_from_data=True)
+            chart.set_categories(cats)
+            chart.height = 15
+            chart.width = 25
+            ws.add_chart(chart, f"A{ws.max_row + 3}")
+    except Exception as e:
+        logger.warning(f"Не вдалося створити графік цільових лідів: {e}")
+
+    # График 2: Pie chart для конверсії
+    try:
+        conversion_col_idx = headers.index("% конверсія") + 1 if "% конверсія" in headers else None
+
+        if conversion_col_idx and ws.max_row <= 10:
+            pie = PieChart()
+            pie.title = "Конверсія по креативах"
+            labels = Reference(ws, min_col=1, min_row=2, max_row=min(ws.max_row, 10))
+            data = Reference(ws, min_col=conversion_col_idx, min_row=2, max_row=min(ws.max_row, 10))
+            pie.add_data(data)
+            pie.set_categories(labels)
+            pie.height = 12
+            pie.width = 18
+            ws.add_chart(pie, f"N{ws.max_row + 3}")
+    except Exception as e:
+        logger.warning(f"Не вдалося створити pie chart конверсії: {e}")
+
+
+def _add_ads_charts(ws):
+    """Добавляет графики для рекламных данных."""
+    from openpyxl.chart import LineChart, BarChart, Reference
+    from openpyxl.chart.label import DataLabelList
+
+    if ws.max_row < 2:
+        return
+
+    headers = [cell.value for cell in ws[1]]
+
+    # График 1: Line chart для spend, impressions, clicks
+    try:
+        spend_col_idx = headers.index("spend") + 1 if "spend" in headers else None
+        impressions_col_idx = headers.index("impressions") + 1 if "impressions" in headers else None
+        clicks_col_idx = headers.index("clicks") + 1 if "clicks" in headers else None
+
+        if spend_col_idx:
+            chart = LineChart()
+            chart.title = "Витрати та показники по датах"
+            chart.style = 13
+            chart.y_axis.title = "Значення"
+            chart.x_axis.title = "Дата"
+
+            data = Reference(ws, min_col=spend_col_idx, min_row=1, max_row=min(ws.max_row, 30))
+            cats = Reference(ws, min_col=1, min_row=2, max_row=min(ws.max_row, 30))
+            chart.add_data(data, titles_from_data=True)
+            chart.set_categories(cats)
+            chart.height = 15
+            chart.width = 25
+            ws.add_chart(chart, f"A{ws.max_row + 3}")
+    except Exception as e:
+        logger.warning(f"Не вдалося створити line chart: {e}")
+
+    # График 2: Bar chart для CTR и CPC
+    try:
+        ctr_col_idx = headers.index("ctr") + 1 if "ctr" in headers else None
+        cpc_col_idx = headers.index("cpc") + 1 if "cpc" in headers else None
+
+        if ctr_col_idx and cpc_col_idx:
+            chart = BarChart()
+            chart.type = "col"
+            chart.title = "CTR та CPC по оголошеннях"
+            chart.y_axis.title = "Значення"
+            chart.x_axis.title = "Оголошення"
+
+            data = Reference(ws, min_col=ctr_col_idx, min_row=1, max_row=min(ws.max_row, 20), max_col=cpc_col_idx)
+            cats = Reference(ws, min_col=8, min_row=2, max_row=min(ws.max_row, 20))
+            chart.add_data(data, titles_from_data=True)
+            chart.set_categories(cats)
+            chart.height = 15
+            chart.width = 25
+            ws.add_chart(chart, f"N{ws.max_row + 3}")
+    except Exception as e:
+        logger.warning(f"Не вдалося створити bar chart для CTR/CPC: {e}")
+
+
 @app.post("/api/download-excel")
 async def download_excel(payload: Dict[str, Any]):
     """
@@ -477,6 +586,8 @@ async def download_excel(payload: Dict[str, Any]):
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
+    from openpyxl.chart import BarChart, LineChart, PieChart, Reference
+    from openpyxl.chart.label import DataLabelList
 
     data_type = payload.get("data_type", "ads")
     start_date = payload.get("start_date")
@@ -549,6 +660,10 @@ async def download_excel(payload: Dict[str, Any]):
                         ws.cell(row=row_idx, column=col_idx).number_format = '$#,##0.00'
 
             source_wb.close()
+
+            # Добавляем графики для студентов
+            _add_students_charts(ws)
+
             filename = f"students_export_{start_date}_{end_date}.xlsx"
 
         else:  # ads (creatives)
@@ -591,6 +706,9 @@ async def download_excel(payload: Dict[str, Any]):
                     insight.get("ctr", 0),
                 ]
                 ws.append(row)
+
+            # Добавляем графики для рекламы
+            _add_ads_charts(ws)
 
             filename = f"ads_export_{start_date}_{end_date}.xlsx"
 
