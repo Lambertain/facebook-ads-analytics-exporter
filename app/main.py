@@ -7,6 +7,11 @@ from typing import Dict, Any
 from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
 
 from .progress import ProgressStore
@@ -23,6 +28,38 @@ load_dotenv()
 
 app = FastAPI(title="Ads → Sheets → CRM")
 
+# Security: Rate limiting
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Security: CORS protection
+# TODO: Replace with your actual frontend domain in production
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8000").split(",")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Authorization"],
+)
+
+# Security: Trusted host protection
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
+
+# Security: Add security headers middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+    return response
+
 progress = ProgressStore()
 
 # Define paths for static files
@@ -31,7 +68,8 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 
 
 @app.post("/api/start-job")
-async def start_job(payload: Dict[str, Any], background_tasks: BackgroundTasks):
+@limiter.limit("5/minute")
+async def start_job(request: Request, payload: Dict[str, Any], background_tasks: BackgroundTasks):
     # payload expects: start_date, end_date (YYYY-MM-DD), sheet_id (optional)
     start_date = payload.get("start_date")
     end_date = payload.get("end_date")
@@ -137,12 +175,14 @@ async def inspect_alfacrm_companies():
 
 
 @app.get("/api/config")
-async def get_config():
+@limiter.limit("10/minute")
+async def get_config(request: Request):
     return get_config_masked()
 
 
 @app.post("/api/config")
-async def update_config(payload: Dict[str, Any]):
+@limiter.limit("5/minute")
+async def update_config(request: Request, payload: Dict[str, Any]):
     # Never echo secrets back
     set_config(payload or {})
     return {"status": "ok"}
