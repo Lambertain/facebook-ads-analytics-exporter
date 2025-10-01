@@ -95,20 +95,276 @@ async def _enrich_pipedrive(leads: List[Dict[str, Any]]):
 
 
 async def _enrich_nethunt(leads: List[Dict[str, Any]]):
+    """Обогащение лидов данными из NetHunt с поиском по phone/email."""
     auth = os.getenv("NETHUNT_BASIC_AUTH")
-    # Placeholder passthrough unless later matched by phone/email against records we fetch by folder
-    await asyncio.sleep(0)
-    return [{**l, "crm_status": None, "crm_stage": None} for l in leads]
+    folder_id = os.getenv("NETHUNT_FOLDER_ID", "default")
+
+    if not auth:
+        logger.warning("NETHUNT_BASIC_AUTH not configured, skipping enrichment")
+        return [{**l, "crm_status": "not_configured", "crm_stage": None} for l in leads]
+
+    try:
+        # Получаем список записей из NetHunt
+        # Если folder_id не указан, пытаемся получить первую папку
+        if folder_id == "default":
+            folders = nethunt_list_folders()
+            if not folders:
+                logger.error("No NetHunt folders found")
+                return [{**l, "crm_status": "api_error", "crm_stage": None} for l in leads]
+            folder_id = folders[0].get("id")
+            logger.info(f"Using NetHunt folder: {folders[0].get('name')} ({folder_id})")
+
+        records = nethunt_list_records(folder_id, limit=1000)
+        logger.info(f"Loaded {len(records)} records from NetHunt folder {folder_id}")
+
+        # Создаем индекс для быстрого поиска
+        record_index = {}
+        for record in records:
+            # NetHunt хранит данные в полях (fields)
+            fields = record.get("fields", {})
+
+            # Ищем телефон и email в полях записи
+            for field_name, field_value in fields.items():
+                field_name_lower = field_name.lower()
+
+                # Индексируем по телефону
+                if any(keyword in field_name_lower for keyword in ["phone", "телефон", "tel"]):
+                    phone_value = str(field_value).strip().replace("+", "").replace("-", "").replace(" ", "")
+                    if phone_value:
+                        record_index[phone_value] = record
+
+                # Индексируем по email
+                if any(keyword in field_name_lower for keyword in ["email", "почта", "mail"]):
+                    email_value = str(field_value).strip().lower()
+                    if email_value:
+                        record_index[email_value] = record
+
+        # Обогащаем каждый лид
+        enriched_leads = []
+        for lead in leads:
+            # Извлекаем контакты лида
+            lead_phone = _extract_field(lead.get("field_data", []), {"phone_number", "phone", "Телефон"})
+            lead_email = _extract_field(lead.get("field_data", []), {"email", "e-mail", "Эл. почта"})
+
+            # Нормализуем для поиска
+            normalized_phone = lead_phone.strip().replace("+", "").replace("-", "").replace(" ", "") if lead_phone else None
+            normalized_email = lead_email.strip().lower() if lead_email else None
+
+            # Ищем запись в индексе
+            crm_record = None
+            matched_by = None
+            if normalized_phone and normalized_phone in record_index:
+                crm_record = record_index[normalized_phone]
+                matched_by = "phone"
+            elif normalized_email and normalized_email in record_index:
+                crm_record = record_index[normalized_email]
+                matched_by = "email"
+
+            if crm_record:
+                # Маппинг статусов NetHunt
+                crm_status, crm_stage = _map_nethunt_status(crm_record)
+
+                enriched_leads.append({
+                    **lead,
+                    "crm_status": crm_status,
+                    "crm_stage": crm_stage,
+                    "crm_id": crm_record.get("id"),
+                    "crm_matched_by": matched_by
+                })
+                logger.debug(f"Matched lead {lead.get('id')} with NetHunt record {crm_record.get('id')}")
+            else:
+                # Лид не найден в CRM
+                enriched_leads.append({
+                    **lead,
+                    "crm_status": "not_found",
+                    "crm_stage": None,
+                    "crm_id": None
+                })
+
+        logger.info(f"NetHunt enrichment: {len([l for l in enriched_leads if l.get('crm_id')])} matched, {len([l for l in enriched_leads if l.get('crm_status') == 'not_found'])} not found")
+        return enriched_leads
+
+    except Exception as e:
+        logger.error(f"NetHunt enrichment failed: {type(e).__name__}: {e}")
+        return [{**l, "crm_status": "enrichment_error", "crm_stage": None} for l in leads]
 
 
 async def _enrich_alfacrm(leads: List[Dict[str, Any]]):
-    base_url = os.getenv("ALFACRM_BASE_URL")
-    email = os.getenv("ALFACRM_EMAIL")
-    api_key = os.getenv("ALFACRM_API_KEY")
-    company_id = os.getenv("ALFACRM_COMPANY_ID")
-    # Placeholder passthrough; real matching to be implemented with provided base_url/company_id
-    await asyncio.sleep(0)
-    return [{**l, "crm_status": None, "crm_stage": None} for l in leads]
+    """Обогащение лидов данными из AlfaCRM с поиском по phone/email.
+
+    AlfaCRM API: /api/v2/student/index
+    Структура ответа: {"items": [...], "total": N, "page": N}
+    Student поля: id, name, phone (array), email (array), study_status_id, is_study, balance, paid_lesson_count
+    """
+    if not os.getenv("ALFACRM_BASE_URL") or not os.getenv("ALFACRM_COMPANY_ID"):
+        logger.warning("AlfaCRM credentials not configured, skipping enrichment")
+        return [{**l, "crm_status": "not_configured", "crm_stage": None} for l in leads]
+
+    try:
+        # Используем существующий helper для получения студентов
+        students_data = alfacrm_list_students(page=1, page_size=1000)
+
+        # AlfaCRM возвращает items напрямую или в структуре {items: [], total: N}
+        students = students_data if isinstance(students_data, list) else students_data.get("items", [])
+        logger.info(f"Loaded {len(students)} students from AlfaCRM")
+
+        # Создаем индекс для быстрого поиска по phone/email
+        # ВАЖНО: phone и email в AlfaCRM это МАССИВЫ
+        student_index = {}
+        for student in students:
+            # Индексируем по всем телефонам студента (массив)
+            phones = student.get("phone", [])
+            if isinstance(phones, str):  # Если вдруг строка, конвертируем в массив
+                phones = [phones]
+            for phone in phones:
+                normalized = str(phone).strip().replace("+", "").replace("-", "").replace(" ", "").replace("(", "").replace(")", "")
+                if normalized:
+                    student_index[normalized] = student
+
+            # Индексируем по всем email студента (массив)
+            emails = student.get("email", [])
+            if isinstance(emails, str):  # Если вдруг строка, конвертируем в массив
+                emails = [emails]
+            for email in emails:
+                normalized = str(email).strip().lower()
+                if normalized:
+                    student_index[normalized] = student
+
+        # Обогащаем каждый лид
+        enriched_leads = []
+        for lead in leads:
+            # Извлекаем контакты лида
+            lead_phone = _extract_field(lead.get("field_data", []), {"phone_number", "phone", "Телефон"})
+            lead_email = _extract_field(lead.get("field_data", []), {"email", "e-mail", "Эл. почта"})
+
+            # Нормализуем телефон для поиска
+            normalized_phone = lead_phone.strip().replace("+", "").replace("-", "").replace(" ", "").replace("(", "").replace(")", "") if lead_phone else None
+            normalized_email = lead_email.strip().lower() if lead_email else None
+
+            # Ищем студента в индексе
+            crm_student = None
+            matched_by = None
+            if normalized_phone and normalized_phone in student_index:
+                crm_student = student_index[normalized_phone]
+                matched_by = "phone"
+            elif normalized_email and normalized_email in student_index:
+                crm_student = student_index[normalized_email]
+                matched_by = "email"
+
+            if crm_student:
+                # Маппинг статусов AlfaCRM в универсальные
+                # Используем study_status_id согласно документации
+                status_id = crm_student.get("study_status_id")
+                crm_status = _map_alfacrm_status(status_id)
+                crm_stage = _map_alfacrm_stage(crm_student)
+
+                enriched_leads.append({
+                    **lead,
+                    "crm_status": crm_status,
+                    "crm_stage": crm_stage,
+                    "crm_id": crm_student.get("id"),
+                    "crm_matched_by": matched_by
+                })
+                logger.debug(f"Matched lead {lead.get('id')} with AlfaCRM student {crm_student.get('id')}")
+            else:
+                # Лид не найден в CRM
+                enriched_leads.append({
+                    **lead,
+                    "crm_status": "not_found",
+                    "crm_stage": None,
+                    "crm_id": None
+                })
+
+        logger.info(f"AlfaCRM enrichment: {len([l for l in enriched_leads if l.get('crm_id')])} matched, {len([l for l in enriched_leads if l.get('crm_status') == 'not_found'])} not found")
+        return enriched_leads
+
+    except Exception as e:
+        logger.error(f"AlfaCRM enrichment failed: {type(e).__name__}: {e}")
+        return [{**l, "crm_status": "enrichment_error", "crm_stage": None} for l in leads]
+
+
+# Mapping functions for CRM statuses to universal format
+
+def _map_alfacrm_status(status_id: int) -> str:
+    """
+    Маппинг статусов AlfaCRM в универсальные статусы воронки.
+
+    AlfaCRM статусы (типичные):
+    1 - Новый лид
+    2 - Установлен контакт
+    3 - В обработке
+    4 - Назначен пробный урок
+    5 - Проведен пробный
+    6 - Продажа (студент)
+    7 - Архив (отказ)
+    """
+    status_map = {
+        1: "new",                  # Новый лид
+        2: "contacted",            # Установлен контакт
+        3: "in_progress",          # В обработке
+        4: "trial_scheduled",      # Назначен пробный
+        5: "trial_completed",      # Проведен пробный
+        6: "converted",            # Продажа
+        7: "archived",             # Архив/Отказ
+        8: "no_answer"             # Недозвон
+    }
+    return status_map.get(status_id, "unknown")
+
+
+def _map_alfacrm_stage(student: Dict[str, Any]) -> str:
+    """
+    Определение стадии воронки на основе данных студента.
+
+    Возвращает текущую стадию: lead, trial, active, paused, archived
+    """
+    status_id = student.get("status_id")
+    is_active = student.get("is_active", False)
+    has_lessons = student.get("lessons_count", 0) > 0
+
+    if status_id in [1, 2, 3]:  # Новый, контакт, обработка
+        return "lead"
+    elif status_id in [4, 5]:  # Пробный урок
+        return "trial"
+    elif status_id == 6:  # Продажа
+        if is_active and has_lessons:
+            return "active"
+        elif not is_active:
+            return "paused"
+    elif status_id == 7:  # Архив
+        return "archived"
+
+    return "unknown"
+
+
+def _map_nethunt_status(record: Dict[str, Any]) -> tuple[str, str]:
+    """
+    Маппинг статусов NetHunt в универсальные.
+
+    Returns:
+        (crm_status, crm_stage)
+    """
+    # NetHunt использует кастомные поля и статусы
+    # Извлекаем status из record
+    record_status = record.get("status", {})
+    status_name = record_status.get("name", "").lower()
+
+    # Типичные статусы NetHunt
+    status_mapping = {
+        "new": ("new", "lead"),
+        "contacted": ("contacted", "lead"),
+        "qualified": ("in_progress", "lead"),
+        "proposal": ("in_progress", "trial"),
+        "negotiation": ("trial_scheduled", "trial"),
+        "closed won": ("converted", "active"),
+        "closed lost": ("archived", "archived")
+    }
+
+    # Если статус не найден, пытаемся определить по keywords
+    for key, (status, stage) in status_mapping.items():
+        if key in status_name:
+            return (status, stage)
+
+    return ("unknown", "unknown")
 
 
 # Helper calls for inspection endpoints
