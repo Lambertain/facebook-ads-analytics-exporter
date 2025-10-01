@@ -82,6 +82,41 @@ npm run build
 - Прогресс‑бар и поток логов (SSE)
 - UI вкладка «Настройки» для ввода кредов и путей; сохранение в `.env`
 
+## API Authentication (Security)
+
+**ВАЖНО:** В production режиме API защищен authentication через API keys.
+
+### Генерация API ключа:
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+### Настройка:
+1. Добавьте сгенерированный ключ в `.env`:
+```
+API_KEYS=ваш_сгенерированный_ключ_здесь
+```
+
+2. Для нескольких ключей используйте запятую без пробелов:
+```
+API_KEYS=key1,key2,key3
+```
+
+### Использование API:
+Добавьте `Authorization` header ко всем защищенным запросам:
+```bash
+curl -X POST http://localhost:8000/api/start-job \
+  -H "Authorization: Bearer ваш_api_ключ" \
+  -H "Content-Type: application/json" \
+  -d '{"start_date": "2025-01-01", "end_date": "2025-01-31"}'
+```
+
+### Защищенные endpoints:
+- `POST /api/start-job` - запуск pipeline
+- `POST /api/config` - изменение конфигурации
+
+**Development режим:** Если `API_KEYS` пустой, authentication отключен для удобства разработки.
+
 ## Настройка Meta
 - Получите `META_ACCESS_TOKEN` с правами: ads_read, leads_retrieval и доступом к нужным страницам/аккаунту.
 - Укажите `META_AD_ACCOUNT_ID` (например, `act_1234567890`).

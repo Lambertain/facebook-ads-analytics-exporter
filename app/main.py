@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Dict, Any
 
-from fastapi import FastAPI, BackgroundTasks, Request
+from fastapi import FastAPI, BackgroundTasks, Request, Depends
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +22,7 @@ from .mapping import load_mapping
 from .connectors import crm as crm_tools
 from .config_store import get_config_masked, set_config
 from .connectors import crm as crm_conn
+from .middleware.auth import verify_api_key
 
 
 load_dotenv()
@@ -69,7 +70,12 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 
 @app.post("/api/start-job")
 @limiter.limit("5/minute")
-async def start_job(request: Request, payload: Dict[str, Any], background_tasks: BackgroundTasks):
+async def start_job(
+    request: Request,
+    payload: Dict[str, Any],
+    background_tasks: BackgroundTasks,
+    api_key: str = Depends(verify_api_key),
+):
     # payload expects: start_date, end_date (YYYY-MM-DD), sheet_id (optional)
     start_date = payload.get("start_date")
     end_date = payload.get("end_date")
@@ -182,7 +188,9 @@ async def get_config(request: Request):
 
 @app.post("/api/config")
 @limiter.limit("5/minute")
-async def update_config(request: Request, payload: Dict[str, Any]):
+async def update_config(
+    request: Request, payload: Dict[str, Any], api_key: str = Depends(verify_api_key)
+):
     # Never echo secrets back
     set_config(payload or {})
     return {"status": "ok"}
