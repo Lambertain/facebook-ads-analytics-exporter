@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Meta Ads → Google Sheets → CRM</title>
+  <style>
+    body { font-family: sans-serif; margin: 24px; }
+    .row { margin-bottom: 12px; }
+    label { display: inline-block; width: 140px; }
+    input { padding: 6px 8px; }
+    button { padding: 8px 12px; }
+    #bar { width: 100%; height: 14px; background: #eee; border-radius: 7px; overflow: hidden; }
+    #bar > div { height: 100%; width: 0%; background: #4CAF50; transition: width 0.3s; }
+    #log { white-space: pre-wrap; background: #f7f7f7; padding: 8px; border-radius: 6px; height: 200px; overflow: auto; }
+  </style>
+  </head>
+<body>
+  <h2>Загрузка данных Meta Ads в Google Sheets и проверка статусов в CRM</h2>
+
+  <div class="row">
+    <label>Период c:</label>
+    <input type="date" id="start_date" />
+  </div>
+  <div class="row">
+    <label>Период по:</label>
+    <input type="date" id="end_date" />
+  </div>
+  <div class="row">
+    <label>Google Sheet ID:</label>
+    <input type="text" id="sheet_id" placeholder="1A2B3C..." style="width: 360px;" />
+  </div>
+  <div class="row">
+    <button id="start">Старт</button>
+    <button id="inspect" style="margin-left:8px">Проверить заголовки</button>
+    <button id="nh_folders" style="margin-left:8px">NetHunt папки</button>
+  </div>
+
+  <div class="row">
+    <div id="bar"><div></div></div>
+  </div>
+  <div class="row">
+    <div id="log"></div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const bar = $("bar").firstElementChild;
+    const logBox = $("log");
+
+    function log(msg) {
+      const now = new Date().toLocaleTimeString();
+      logBox.textContent += `[${now}] ${msg}\n`;
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    $("start").addEventListener("click", async () => {
+      const start_date = $("start_date").value;
+      const end_date = $("end_date").value;
+      const sheet_id = $("sheet_id").value;
+      if (!start_date || !end_date) {
+        alert("Укажите даты периода");
+        return;
+      }
+
+      log("Запуск задания...");
+      bar.style.width = '5%';
+
+      const resp = await fetch('/api/start-job', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ start_date, end_date, sheet_id })
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        log('Ошибка запуска: ' + (data.error || resp.status));
+        return;
+      }
+      const jobId = data.job_id;
+      log('Задание #' + jobId);
+
+      const es = new EventSource('/api/events/' + jobId);
+      es.addEventListener('log', (e) => log(e.data));
+      es.addEventListener('progress', (e) => {
+        try {
+          const p = JSON.parse(e.data);
+          bar.style.width = (p.percent || 0) + '%';
+          if (p.status === 'done') {
+            log('Готово ✔');
+            es.close();
+          }
+          if (p.status === 'error') {
+            log('Завершено с ошибкой ✖');
+            es.close();
+          }
+        } catch {}
+      });
+      es.onerror = () => {
+        log('Поток событий прерван');
+        es.close();
+      };
+    });
+
+    $("inspect").addEventListener("click", async () => {
+      const resp = await fetch('/api/inspect/excel-headers');
+      const data = await resp.json();
+      log('Excel headers: ' + JSON.stringify(data));
+    });
+
+    $("nh_folders").addEventListener("click", async () => {
+      const resp = await fetch('/api/inspect/nethunt/folders');
+      const data = await resp.json();
+      log('NetHunt folders: ' + JSON.stringify(data));
+    });
+  </script>
+</body>
+</html>

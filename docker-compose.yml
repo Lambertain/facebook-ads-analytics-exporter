@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # FastAPI Backend
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ecademy-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./app:/app/app
+      - ./config:/app/config
+      - ./scripts:/app/scripts
+      - ./static:/app/static
+      - ./web/dist:/app/web/dist
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/config')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: PostgreSQL database (для будущей задачи P88)
+  # Uncomment when adding database support
+  # db:
+  #   image: postgres:15-alpine
+  #   container_name: ecademy-db
+  #   environment:
+  #     POSTGRES_USER: ${DB_USER:-ecademy}
+  #     POSTGRES_PASSWORD: ${DB_PASSWORD:-ecademy_password}
+  #     POSTGRES_DB: ${DB_NAME:-ecademy_db}
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   restart: unless-stopped
+
+# volumes:
+#   postgres_data:

@@ -1,0 +1,385 @@
+import asyncio
+import os
+import uuid
+from datetime import datetime
+from typing import Dict, Any
+
+from fastapi import FastAPI, BackgroundTasks, Request
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from dotenv import load_dotenv
+
+from .progress import ProgressStore
+from .connectors import meta as meta_conn
+from .connectors import google_sheets as gs_conn
+from .connectors import excel as excel_conn
+from .mapping import load_mapping
+from .connectors import crm as crm_tools
+from .config_store import get_config_masked, set_config
+from .connectors import crm as crm_conn
+
+
+load_dotenv()
+
+app = FastAPI(title="Ads → Sheets → CRM")
+
+progress = ProgressStore()
+
+# Define paths for static files
+WEB_DIST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "dist")
+STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+
+
+@app.post("/api/start-job")
+async def start_job(payload: Dict[str, Any], background_tasks: BackgroundTasks):
+    # payload expects: start_date, end_date (YYYY-MM-DD), sheet_id (optional)
+    start_date = payload.get("start_date")
+    end_date = payload.get("end_date")
+    sheet_id = payload.get("sheet_id") or os.getenv("GOOGLE_SHEET_ID")
+
+    # Basic validation
+    for key, val in {"start_date": start_date, "end_date": end_date}.items():
+        if not val:
+            return JSONResponse({"error": f"Missing {key}"}, status_code=400)
+    try:
+        _ = datetime.strptime(start_date, "%Y-%m-%d")
+        _ = datetime.strptime(end_date, "%Y-%m-%d")
+    except ValueError:
+        return JSONResponse({"error": "Invalid date format, use YYYY-MM-DD"}, status_code=400)
+    backend = os.getenv("STORAGE_BACKEND", "sheets").lower()
+    if backend == "sheets" and not sheet_id:
+        return JSONResponse({"error": "Missing Google Sheet ID"}, status_code=400)
+
+    job_id = str(uuid.uuid4())
+    progress.init(job_id, title="Pipeline run")
+
+    params = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "sheet_id": sheet_id,
+    }
+    background_tasks.add_task(run_pipeline, job_id, params)
+    return {"job_id": job_id}
+
+
+@app.get("/api/events/{job_id}")
+async def events(job_id: str):
+    async def event_stream():
+        last_index = 0
+        while True:
+            await asyncio.sleep(0.5)
+            state = progress.get(job_id)
+            if not state:
+                # job unknown → end stream
+                break
+            logs = state["logs"]
+            # Send incremental logs and current progress as SSE
+            while last_index < len(logs):
+                msg = logs[last_index]
+                last_index += 1
+                yield f"event: log\ndata: {msg}\n\n"
+            yield (
+                "event: progress\n"
+                f"data: {{\"percent\": {state['percent']}, \"status\": \"{state['status']}\"}}\n\n"
+            )
+            if state["status"] in ("done", "error"):
+                break
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.get("/api/inspect/excel-headers")
+async def inspect_excel_headers():
+    from .connectors import excel as ex
+    # Just probe existing headers by reading first row; we won’t modify files here
+    files = {
+        "creatives": os.getenv("EXCEL_CREATIVES_PATH"),
+        "students": os.getenv("EXCEL_STUDENTS_PATH"),
+        "teachers": os.getenv("EXCEL_TEACHERS_PATH"),
+    }
+    result = {}
+    for key, path in files.items():
+        if not path or not os.path.exists(path):
+            result[key] = {"error": "file_not_found", "path": path}
+            continue
+        try:
+            # reuse openpyxl through helpers
+            from openpyxl import load_workbook
+            wb = load_workbook(path, read_only=True, data_only=True)
+            sheets = {}
+            for name in wb.sheetnames:
+                ws = wb[name]
+                row1 = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None) or []
+                headers = [str(c) if c is not None else '' for c in row1]
+                sheets[name] = headers
+            result[key] = {"path": path, "sheets": sheets}
+        except Exception as e:
+            result[key] = {"path": path, "error": str(e)}
+    return result
+
+
+@app.get("/api/inspect/nethunt/folders")
+async def inspect_nethunt_folders():
+    data = crm_tools.nethunt_list_folders()
+    return data
+
+
+@app.get("/api/inspect/nethunt/fields")
+async def inspect_nethunt_fields(folder_id: str):
+    data = crm_tools.nethunt_folder_fields(folder_id)
+    return data
+
+
+@app.get("/api/inspect/alfacrm/companies")
+async def inspect_alfacrm_companies():
+    data = crm_tools.alfacrm_list_companies()
+    return data
+
+
+@app.get("/api/config")
+async def get_config():
+    return get_config_masked()
+
+
+@app.post("/api/config")
+async def update_config(payload: Dict[str, Any]):
+    # Never echo secrets back
+    set_config(payload or {})
+    return {"status": "ok"}
+
+
+@app.post("/api/download-excel")
+async def download_excel(payload: Dict[str, Any]):
+    from fastapi.responses import FileResponse
+    import tempfile
+    import openpyxl
+    from openpyxl import Workbook
+
+    start_date = payload.get("start_date")
+    end_date = payload.get("end_date")
+
+    # Получаем данные из Meta Ads
+    meta_token = os.getenv("META_ACCESS_TOKEN")
+    ad_account_id = os.getenv("META_AD_ACCOUNT_ID")
+
+    if not meta_token or not ad_account_id:
+        return JSONResponse({"error": "META credentials not configured"}, status_code=400)
+
+    try:
+        # Fetch data
+        insights = meta_conn.fetch_insights(
+            ad_account_id=ad_account_id,
+            access_token=meta_token,
+            date_from=start_date,
+            date_to=end_date,
+            level="ad"
+        )
+
+        # Create workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Creatives"
+
+        # Headers
+        headers = ["date_start", "date_stop", "campaign_id", "campaign_name",
+                   "adset_id", "adset_name", "ad_id", "ad_name",
+                   "impressions", "clicks", "spend", "cpc", "cpm", "ctr"]
+        ws.append(headers)
+
+        # Data rows
+        for insight in insights:
+            row = [
+                insight.get("date_start", ""),
+                insight.get("date_stop", ""),
+                insight.get("campaign_id", ""),
+                insight.get("campaign_name", ""),
+                insight.get("adset_id", ""),
+                insight.get("adset_name", ""),
+                insight.get("ad_id", ""),
+                insight.get("ad_name", ""),
+                insight.get("impressions", 0),
+                insight.get("clicks", 0),
+                insight.get("spend", 0),
+                insight.get("cpc", 0),
+                insight.get("cpm", 0),
+                insight.get("ctr", 0),
+            ]
+            ws.append(row)
+
+        # Save to temp file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+        wb.save(temp_file.name)
+        temp_file.close()
+
+        return FileResponse(
+            temp_file.name,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=f"ecademy_export_{start_date}_{end_date}.xlsx"
+        )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def run_pipeline(job_id: str, params: Dict[str, Any]):
+    try:
+        progress.update(job_id, 2, "Validating credentials")
+        # Meta credentials
+        meta_token = os.getenv("META_ACCESS_TOKEN")
+        ad_account_id = os.getenv("META_AD_ACCOUNT_ID")
+        if not meta_token or not ad_account_id:
+            raise RuntimeError("META_ACCESS_TOKEN or META_AD_ACCOUNT_ID not set")
+
+        backend = os.getenv("STORAGE_BACKEND", "sheets").lower()
+        gs_client = None
+        sheet_id = params.get("sheet_id")
+        if backend == "sheets":
+            gs_client = gs_conn.get_client()
+            if not sheet_id:
+                raise RuntimeError("GOOGLE_SHEET_ID is required when STORAGE_BACKEND=sheets")
+
+        # 1) Fetch Ads insights
+        progress.update(job_id, 10, "Fetching Meta Ads insights (ad-level)")
+        insights = meta_conn.fetch_insights(
+            ad_account_id=ad_account_id,
+            access_token=meta_token,
+            date_from=params["start_date"],
+            date_to=params["end_date"],
+            level="ad",
+        )
+
+        # 2) Fetch Leads
+        progress.update(job_id, 30, "Preparing CRM datasets (students: AlfaCRM, teachers: NetHunt)")
+        # Fetch teachers from NetHunt
+        teachers: list[dict] = []
+        nh_folder = os.getenv("NETHUNT_FOLDER_ID")
+        if nh_folder:
+            try:
+                raw_records = crm_tools.nethunt_list_records(nh_folder, limit=1000)
+                # Flatten NetHunt records: keep id, createdAt, updatedAt and fields
+                for r in raw_records:
+                    flat = {}
+                    if isinstance(r, dict):
+                        flat["id"] = r.get("id") or r.get("_id")
+                        flat["createdAt"] = r.get("createdAt")
+                        flat["updatedAt"] = r.get("updatedAt")
+                        fields = r.get("fields") or {}
+                        if isinstance(fields, dict):
+                            for k, v in fields.items():
+                                # Basic normalization
+                                if isinstance(v, (dict, list)):
+                                    try:
+                                        import json as _json
+                                        flat[k] = _json.dumps(v, ensure_ascii=False)
+                                    except Exception:
+                                        flat[k] = str(v)
+                                else:
+                                    flat[k] = v
+                    teachers.append(flat)
+                progress.log(job_id, f"NetHunt teachers fetched: {len(teachers)}")
+            except Exception as e:
+                progress.log(job_id, f"NetHunt fetch error: {e}")
+        else:
+            progress.log(job_id, "NETHUNT_FOLDER_ID not set; skip teachers")
+
+        # Fetch students from AlfaCRM
+        students: list[dict] = []
+        if os.getenv("ALFACRM_BASE_URL") and os.getenv("ALFACRM_EMAIL") and os.getenv("ALFACRM_API_KEY") and os.getenv("ALFACRM_COMPANY_ID"):
+            try:
+                page = 1
+                total = 0
+                while True:
+                    data = crm_tools.alfacrm_list_students(page=page, page_size=200)
+                    # Expect data like {items:[...], total: N} or similar
+                    items = data.get("items") or data.get("data") or data.get("list") or []
+                    if not isinstance(items, list):
+                        break
+                    for s in items:
+                        # Flatten student
+                        flat = {}
+                        if isinstance(s, dict):
+                            for k, v in s.items():
+                                if isinstance(v, (dict, list)):
+                                    try:
+                                        import json as _json
+                                        flat[k] = _json.dumps(v, ensure_ascii=False)
+                                    except Exception:
+                                        flat[k] = str(v)
+                                else:
+                                    flat[k] = v
+                        students.append(flat)
+                    total += len(items)
+                    if len(items) < 200:
+                        break
+                    page += 1
+                progress.log(job_id, f"AlfaCRM students fetched: {len(students)}")
+            except Exception as e:
+                progress.log(job_id, f"AlfaCRM fetch error: {e}")
+        else:
+            progress.log(job_id, "AlfaCRM creds incomplete; skip students")
+
+        # 3) Check CRM statuses
+        progress.update(job_id, 45, "Fetched CRM datasets")
+
+        # 4) Write to Google Sheets
+        progress.update(job_id, 70, "Writing outputs to target storage")
+        mapping = load_mapping()
+        if backend == "sheets" and gs_client:
+            gs_conn.write_insights(gs_client, sheet_id, insights)
+            # If needed, write students/teachers to different tabs/sheets in Sheets (not configured yet)
+        else:
+            excel_creatives = os.getenv("EXCEL_CREATIVES_PATH")
+            excel_students = os.getenv("EXCEL_STUDENTS_PATH")
+            excel_teachers = os.getenv("EXCEL_TEACHERS_PATH")
+            if excel_creatives:
+                cr_map = mapping.get("creatives", {})
+                excel_conn.write_creatives(
+                    excel_creatives,
+                    insights,
+                    mapping=cr_map.get("fields"),
+                    sheet_name=cr_map.get("sheet_name", "Creatives"),
+                )
+                progress.log(job_id, f"Creatives written: {len(insights)} rows")
+            else:
+                progress.log(job_id, "EXCEL_CREATIVES_PATH not set; skipped creatives")
+            if excel_students:
+                st_map = mapping.get("students", {})
+                excel_conn.write_students(
+                    excel_students,
+                    students,
+                    mapping=st_map.get("fields"),
+                    sheet_name=st_map.get("sheet_name", "Students"),
+                )
+                progress.log(job_id, f"Students written: {len(students)} rows")
+            if excel_teachers:
+                tc_map = mapping.get("teachers", {})
+                excel_conn.write_teachers(
+                    excel_teachers,
+                    teachers,
+                    mapping=tc_map.get("fields"),
+                    sheet_name=tc_map.get("sheet_name", "Teachers"),
+                )
+                progress.log(job_id, f"Teachers written: {len(teachers)} rows")
+
+        progress.update(job_id, 100, "done")
+    except Exception as e:
+        progress.log(job_id, f"ERROR: {e}")
+        progress.set_status(job_id, "error")
+
+
+# Serve index.html for root path
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    dist_index = os.path.join(WEB_DIST, "index.html")
+    if os.path.exists(dist_index):
+        with open(dist_index, "r", encoding="utf-8") as f:
+            return HTMLResponse(f.read())
+    static_index = os.path.join(STATIC_DIR, "index.html")
+    if os.path.exists(static_index):
+        with open(static_index, "r", encoding="utf-8") as f:
+            return HTMLResponse(f.read())
+    return HTMLResponse("<h1>UI not found</h1>")
+
+
+# Mount static files AFTER all API routes to avoid conflicts
+if os.path.exists(WEB_DIST):
+    app.mount("/assets", StaticFiles(directory=os.path.join(WEB_DIST, "assets")), name="assets")
