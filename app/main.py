@@ -91,15 +91,15 @@ async def start_job(
     # Basic validation
     for key, val in {"start_date": start_date, "end_date": end_date}.items():
         if not val:
-            return JSONResponse({"error": f"Missing {key}"}, status_code=400)
+            return JSONResponse({"error": f"Відсутнє поле {key}"}, status_code=400)
     try:
         _ = datetime.strptime(start_date, "%Y-%m-%d")
         _ = datetime.strptime(end_date, "%Y-%m-%d")
     except ValueError:
-        return JSONResponse({"error": "Invalid date format, use YYYY-MM-DD"}, status_code=400)
+        return JSONResponse({"error": "Невірний формат дати, використовуйте YYYY-MM-DD"}, status_code=400)
     backend = os.getenv("STORAGE_BACKEND", "sheets").lower()
     if backend == "sheets" and not sheet_id:
-        return JSONResponse({"error": "Missing Google Sheet ID"}, status_code=400)
+        return JSONResponse({"error": "Відсутній Google Sheet ID"}, status_code=400)
 
     job_id = str(uuid.uuid4())
     progress.init(job_id, title="Pipeline run")
@@ -257,7 +257,7 @@ async def get_runs(
 
             return {"runs": result, "count": len(result)}
     except Exception as e:
-        return JSONResponse({"error": f"Database error: {str(e)}"}, status_code=500)
+        return JSONResponse({"error": f"Помилка бази даних: {str(e)}"}, status_code=500)
 
 
 @app.get("/api/runs/{run_id}")
@@ -269,7 +269,7 @@ async def get_run_details(request: Request, run_id: int):
             run = db.query(PipelineRun).filter(PipelineRun.id == run_id).first()
 
             if not run:
-                return JSONResponse({"error": "Run not found"}, status_code=404)
+                return JSONResponse({"error": "Запуск не знайдено"}, status_code=404)
 
             # Get logs for this run
             logs = db.query(RunLog).filter(RunLog.run_id == run_id).order_by(RunLog.timestamp).all()
@@ -301,7 +301,7 @@ async def get_run_details(request: Request, run_id: int):
                 ]
             }
     except Exception as e:
-        return JSONResponse({"error": f"Database error: {str(e)}"}, status_code=500)
+        return JSONResponse({"error": f"Помилка бази даних: {str(e)}"}, status_code=500)
 
 
 @app.post("/api/download-excel")
@@ -319,7 +319,7 @@ async def download_excel(payload: Dict[str, Any]):
     ad_account_id = os.getenv("META_AD_ACCOUNT_ID")
 
     if not meta_token or not ad_account_id:
-        return JSONResponse({"error": "META credentials not configured"}, status_code=400)
+        return JSONResponse({"error": "META credentials не налаштовані"}, status_code=400)
 
     try:
         # Fetch data
@@ -403,8 +403,8 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
             print(f"Failed to log to DB: {e}")
 
     try:
-        progress.update(job_id, 2, "Validating credentials")
-        log_to_db("Starting pipeline execution")
+        progress.update(job_id, 2, "Перевірка облікових даних")
+        log_to_db("Початок виконання pipeline")
 
         # Meta credentials
         meta_token = os.getenv("META_ACCESS_TOKEN")
@@ -421,7 +421,7 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
                 raise RuntimeError("GOOGLE_SHEET_ID is required when STORAGE_BACKEND=sheets")
 
         # 1) Fetch Ads insights
-        progress.update(job_id, 10, "Fetching Meta Ads insights (ad-level)")
+        progress.update(job_id, 10, "Отримання статистики Meta Ads (рівень оголошень)")
         insights = meta_conn.fetch_insights(
             ad_account_id=ad_account_id,
             access_token=meta_token,
@@ -431,7 +431,7 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
         )
 
         # 2) Fetch Leads
-        progress.update(job_id, 30, "Preparing CRM datasets (students: AlfaCRM, teachers: NetHunt)")
+        progress.update(job_id, 30, "Підготовка даних CRM (студенти: AlfaCRM, викладачі: NetHunt)")
         # Fetch teachers from NetHunt
         teachers: list[dict] = []
         nh_folder = os.getenv("NETHUNT_FOLDER_ID")
@@ -458,11 +458,11 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
                                 else:
                                     flat[k] = v
                     teachers.append(flat)
-                progress.log(job_id, f"NetHunt teachers fetched: {len(teachers)}")
+                progress.log(job_id, f"Отримано викладачів з NetHunt: {len(teachers)}")
             except Exception as e:
-                progress.log(job_id, f"NetHunt fetch error: {e}")
+                progress.log(job_id, f"Помилка отримання з NetHunt: {e}")
         else:
-            progress.log(job_id, "NETHUNT_FOLDER_ID not set; skip teachers")
+            progress.log(job_id, "NETHUNT_FOLDER_ID не встановлено; викладачі пропущені")
 
         # Fetch students from AlfaCRM
         students: list[dict] = []
@@ -494,17 +494,17 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
                     if len(items) < 200:
                         break
                     page += 1
-                progress.log(job_id, f"AlfaCRM students fetched: {len(students)}")
+                progress.log(job_id, f"Отримано студентів з AlfaCRM: {len(students)}")
             except Exception as e:
-                progress.log(job_id, f"AlfaCRM fetch error: {e}")
+                progress.log(job_id, f"Помилка отримання з AlfaCRM: {e}")
         else:
-            progress.log(job_id, "AlfaCRM creds incomplete; skip students")
+            progress.log(job_id, "AlfaCRM credentials неповні; студенти пропущені")
 
         # 3) Check CRM statuses
-        progress.update(job_id, 45, "Fetched CRM datasets")
+        progress.update(job_id, 45, "Отримано дані CRM")
 
         # 4) Write to Google Sheets
-        progress.update(job_id, 70, "Writing outputs to target storage")
+        progress.update(job_id, 70, "Запис даних у цільове сховище")
         mapping = load_mapping()
         if backend == "sheets" and gs_client:
             gs_conn.write_insights(gs_client, sheet_id, insights)
@@ -521,9 +521,9 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
                     mapping=cr_map.get("fields"),
                     sheet_name=cr_map.get("sheet_name", "Creatives"),
                 )
-                progress.log(job_id, f"Creatives written: {len(insights)} rows")
+                progress.log(job_id, f"Записано креативів: {len(insights)} рядків")
             else:
-                progress.log(job_id, "EXCEL_CREATIVES_PATH not set; skipped creatives")
+                progress.log(job_id, "EXCEL_CREATIVES_PATH не встановлено; креативи пропущені")
             if excel_students:
                 st_map = mapping.get("students", {})
                 excel_conn.write_students(
@@ -532,7 +532,7 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
                     mapping=st_map.get("fields"),
                     sheet_name=st_map.get("sheet_name", "Students"),
                 )
-                progress.log(job_id, f"Students written: {len(students)} rows")
+                progress.log(job_id, f"Записано студентів: {len(students)} рядків")
             if excel_teachers:
                 tc_map = mapping.get("teachers", {})
                 excel_conn.write_teachers(
@@ -541,10 +541,10 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
                     mapping=tc_map.get("fields"),
                     sheet_name=tc_map.get("sheet_name", "Teachers"),
                 )
-                progress.log(job_id, f"Teachers written: {len(teachers)} rows")
+                progress.log(job_id, f"Записано викладачів: {len(teachers)} рядків")
 
         progress.update(job_id, 100, "done")
-        log_to_db("Pipeline completed successfully")
+        log_to_db("Pipeline завершено успішно")
 
         # Update database record with results
         with get_db() as db:

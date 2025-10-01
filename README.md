@@ -1,18 +1,18 @@
-# Meta Ads → Google Sheets → CRM (Skeleton)
+# Meta Ads → Google Sheets → CRM
 
-Простой сервис для выгрузки метрик рекламных кампаний и лидов из Meta (Facebook) Ads, записи в Google Sheets и проверки статусов лидов в CRM. Включает минимальный веб‑интерфейс с выбором периода, кнопкой «Старт» и прогресс‑баром.
+Простий сервіс для вивантаження метрик рекламних кампаній та лідів з Meta (Facebook) Ads, запису в Google Sheets та перевірки статусів лідів у CRM. Включає мінімальний веб-інтерфейс з вибором періоду, кнопкою «Старт» та прогрес-баром.
 
 ## Стек
-- FastAPI (backend) + SSE для прогресса
-- Простая HTML‑страница (без фреймворков)
-- Коннекторы: Meta Marketing API, Google Sheets (gspread), CRM (заглушки)
+- FastAPI (backend) + SSE для прогресу
+- React + Material UI (фронтенд)
+- Коннектори: Meta Marketing API, Google Sheets (gspread), CRM (NetHunt, AlfaCRM)
 
-## Быстрый старт
+## Швидкий старт
 
-### Вариант 1: Docker (рекомендуется)
-1) Скопируйте `.env.example` в `.env` и заполните переменные (см. инструкции в файле)
+### Варіант 1: Docker (рекомендується)
+1) Скопіюйте `.env.example` в `.env` та заповніть змінні (див. інструкції в файлі)
 
-2) Соберите фронтенд:
+2) Зберіть фронтенд:
 ```bash
 cd web
 npm install
@@ -20,15 +20,15 @@ npm run build
 cd ..
 ```
 
-3) Запустите через Docker Compose:
+3) Запустіть через Docker Compose:
 ```bash
 docker-compose up -d
 ```
 
-4) Откройте http://localhost:8000
+4) Відкрийте http://localhost:8000
 
-### Вариант 2: Локальная разработка
-1) Установите зависимости:
+### Варіант 2: Локальна розробка
+1) Встановіть залежності:
 ```bash
 python -m venv .venv
 # Windows:

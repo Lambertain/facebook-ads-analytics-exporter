@@ -48,7 +48,7 @@ function Help({ title, children }: { title: string, children: JSX.Element }) {
           {children}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpen(false)}>Понятно</Button>
+          <Button onClick={() => setOpen(false)}>Зрозуміло</Button>
         </DialogActions>
       </Dialog>
     </>
@@ -85,7 +85,7 @@ export default function App() {
       const data = await getConfig()
       setCfg(data)
       if (data.GOOGLE_SHEET_ID?.value) setSheetId(data.GOOGLE_SHEET_ID.value)
-    } catch (e) { setSnack('Не удалось загрузить конфиг') }
+    } catch (e) { setSnack('Не вдалося завантажити конфігурацію') }
   })() }, [])
 
   // Load history when history tab is opened
@@ -101,7 +101,7 @@ export default function App() {
       const data = await response.json()
       setRuns(data.runs || [])
     } catch (e) {
-      setSnack('Не удалось загрузить историю')
+      setSnack('Не вдалося завантажити історію')
     }
   }
 
@@ -111,7 +111,7 @@ export default function App() {
       const data = await response.json()
       setSelectedRun(data)
     } catch (e) {
-      setSnack('Не удалось загрузить детали запуска')
+      setSnack('Не вдалося завантажити деталі запуску')
     }
   }
 
@@ -128,8 +128,8 @@ export default function App() {
         payload[k] = v.value
       }
       await updateConfig(payload)
-      setSnack('Настройки сохранены')
-    } catch { setSnack('Ошибка сохранения настроек') }
+      setSnack('Налаштування збережено')
+    } catch { setSnack('Помилка збереження налаштувань') }
     finally { setSaving(false) }
   }
 
@@ -154,7 +154,7 @@ export default function App() {
         setStatus(p.status || 'running')
       })
     } catch (e: any) {
-      setSnack('Не удалось запустить задачу: ' + (e?.message || ''))
+      setSnack('Не вдалося запустити завдання: ' + (e?.message || ''))
       setStatus('error')
     }
   }
@@ -170,7 +170,7 @@ export default function App() {
 
   async function onDownloadExcel() {
     if (status !== 'done') {
-      setSnack('Сначала запустите процесс и дождитесь завершения')
+      setSnack('Спочатку запустіть процес і дочекайтесь завершення')
       return
     }
     try {
@@ -182,7 +182,7 @@ export default function App() {
           end_date: end?.format('YYYY-MM-DD')
         })
       })
-      if (!response.ok) throw new Error('Ошибка скачивания')
+      if (!response.ok) throw new Error('Помилка завантаження')
 
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
@@ -193,25 +193,25 @@ export default function App() {
       a.click()
       window.URL.revokeObjectURL(url)
       document.body.removeChild(a)
-      setSnack('Excel файл скачан')
+      setSnack('Excel файл завантажено')
     } catch (e: any) {
-      setSnack('Ошибка скачивания: ' + (e?.message || ''))
+      setSnack('Помилка завантаження: ' + (e?.message || ''))
     }
   }
 
   const runTab = (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
       <Box sx={{ mt: 2 }}>
-        {/* Управление и прогресс */}
+        {/* Керування та прогрес */}
         <Grid container spacing={2}>
-          <Grid xs={12} md={4}><DatePicker label="Период c" value={start} onChange={setStart} format="YYYY-MM-DD"/></Grid>
-          <Grid xs={12} md={4}><DatePicker label="Период по" value={end} onChange={setEnd} format="YYYY-MM-DD"/></Grid>
+          <Grid xs={12} md={4}><DatePicker label="Період з" value={start} onChange={setStart} format="YYYY-MM-DD"/></Grid>
+          <Grid xs={12} md={4}><DatePicker label="Період до" value={end} onChange={setEnd} format="YYYY-MM-DD"/></Grid>
           <Grid xs={12}>
             <Button variant="contained" onClick={onStart}>Старт</Button>
-            <Button sx={{ ml: 1 }} onClick={onInspectHeaders}>Проверить заголовки</Button>
+            <Button sx={{ ml: 1 }} onClick={onInspectHeaders}>Перевірити заголовки</Button>
             <Button sx={{ ml: 1 }} onClick={onListNetHunt}>NetHunt папки</Button>
             <Button sx={{ ml: 1 }} variant="outlined" color="success" onClick={onDownloadExcel} disabled={status !== 'done'}>
-              Скачать Excel
+              Завантажити Excel
             </Button>
           </Grid>
           <Grid xs={12}>
@@ -223,12 +223,12 @@ export default function App() {
           </Grid>
         </Grid>
 
-        {/* Вкладки с данными */}
+        {/* Вкладки з даними */}
         <Box sx={{ mt: 3 }}>
           <Tabs value={dataTab} onChange={(_,v)=>setDataTab(v)} sx={{ borderBottom: 1, borderColor: 'divider' }}>
             <Tab label="Реклама" value="ads" />
-            <Tab label="Студенты" value="students" />
-            <Tab label="Учителя" value="teachers" />
+            <Tab label="Студенти" value="students" />
+            <Tab label="Викладачі" value="teachers" />
           </Tabs>
 
           <Box sx={{ mt: 2 }}>
@@ -237,13 +237,13 @@ export default function App() {
                 <Table size="small">
                   <TableHead>
                     <TableRow>
-                      <TableCell>Дата начала</TableCell>
-                      <TableCell>Дата конца</TableCell>
-                      <TableCell>ID кампании</TableCell>
-                      <TableCell>Название кампании</TableCell>
-                      <TableCell>Показы</TableCell>
-                      <TableCell>Клики</TableCell>
-                      <TableCell>Расходы</TableCell>
+                      <TableCell>Дата початку</TableCell>
+                      <TableCell>Дата закінчення</TableCell>
+                      <TableCell>ID кампанії</TableCell>
+                      <TableCell>Назва кампанії</TableCell>
+                      <TableCell>Покази</TableCell>
+                      <TableCell>Кліки</TableCell>
+                      <TableCell>Витрати</TableCell>
                       <TableCell>CPC</TableCell>
                       <TableCell>CPM</TableCell>
                       <TableCell>CTR</TableCell>
@@ -251,7 +251,7 @@ export default function App() {
                   </TableHead>
                   <TableBody>
                     {adsData.length === 0 ? (
-                      <TableRow><TableCell colSpan={10} align="center">Нет данных. Запустите процесс.</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={10} align="center">Немає даних. Запустіть процес.</TableCell></TableRow>
                     ) : adsData.map((row, i) => (
                       <TableRow key={i}>
                         <TableCell>{row.date_start}</TableCell>
@@ -276,19 +276,19 @@ export default function App() {
                 <Table size="small" stickyHeader>
                   <TableHead>
                     <TableRow>
-                      <TableCell>Ссылка на РК</TableCell>
-                      <TableCell>Дата анализа</TableCell>
+                      <TableCell>Посилання на РК</TableCell>
+                      <TableCell>Дата аналізу</TableCell>
                       <TableCell>Бюджет $</TableCell>
-                      <TableCell>Локация</TableCell>
-                      <TableCell>Лидов</TableCell>
+                      <TableCell>Локація</TableCell>
+                      <TableCell>Лідів</TableCell>
                       <TableCell>Куплено</TableCell>
-                      <TableCell>% конверсия</TableCell>
-                      <TableCell>Цена/лид</TableCell>
+                      <TableCell>% конверсія</TableCell>
+                      <TableCell>Ціна/лід</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {studentsData.length === 0 ? (
-                      <TableRow><TableCell colSpan={8} align="center">Нет данных. Запустите процесс.</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={8} align="center">Немає даних. Запустіть процес.</TableCell></TableRow>
                     ) : studentsData.map((row, i) => (
                       <TableRow key={i}>
                         <TableCell>{row['Посилання на рекламну компанію']}</TableCell>
@@ -311,20 +311,20 @@ export default function App() {
                 <Table size="small" stickyHeader>
                   <TableHead>
                     <TableRow>
-                      <TableCell>Название РК</TableCell>
-                      <TableCell>Ссылка</TableCell>
-                      <TableCell>Дата анализа</TableCell>
+                      <TableCell>Назва РК</TableCell>
+                      <TableCell>Посилання</TableCell>
+                      <TableCell>Дата аналізу</TableCell>
                       <TableCell>Бюджет $</TableCell>
-                      <TableCell>Лидов</TableCell>
+                      <TableCell>Лідів</TableCell>
                       <TableCell>СП</TableCell>
-                      <TableCell>Стажеров</TableCell>
+                      <TableCell>Стажерів</TableCell>
                       <TableCell>% СП</TableCell>
-                      <TableCell>Цена/лид</TableCell>
+                      <TableCell>Ціна/лід</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {teachersData.length === 0 ? (
-                      <TableRow><TableCell colSpan={9} align="center">Нет данных. Запустите процесс.</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={9} align="center">Немає даних. Запустіть процес.</TableCell></TableRow>
                     ) : teachersData.map((row, i) => (
                       <TableRow key={i}>
                         <TableCell>{row['Назва РК']}</TableCell>
@@ -347,7 +347,7 @@ export default function App() {
 
         {/* Логи */}
         <Box sx={{ mt: 3, bgcolor:'#f7f7f7', p:2, borderRadius:1, height:200, overflow:'auto', fontFamily:'monospace', whiteSpace:'pre-wrap' }}>
-          {logs.map((l,i)=>(<div key={i}>[{new Date().toLocaleTimeString()}] {l}</div>))}
+          {logs.map((l,i)=>(<div key={i}>[{new Date().toLocaleTimeString('uk-UA')}] {l}</div>))}
         </Box>
       </Box>
     </LocalizationProvider>
@@ -356,30 +356,30 @@ export default function App() {
   const historyTab = (
     <Box sx={{ mt: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2, gap: 2 }}>
-        <Typography variant="h5">История запусков</Typography>
-        <Button variant="outlined" size="small" onClick={() => setHistoryFilter('')}>Все</Button>
-        <Button variant="outlined" size="small" onClick={() => setHistoryFilter('success')}>Успешные</Button>
-        <Button variant="outlined" size="small" onClick={() => setHistoryFilter('error')}>Ошибки</Button>
-        <Button variant="outlined" size="small" onClick={loadHistory}>Обновить</Button>
+        <Typography variant="h5">Історія запусків</Typography>
+        <Button variant="outlined" size="small" onClick={() => setHistoryFilter('')}>Усі</Button>
+        <Button variant="outlined" size="small" onClick={() => setHistoryFilter('success')}>Успішні</Button>
+        <Button variant="outlined" size="small" onClick={() => setHistoryFilter('error')}>Помилки</Button>
+        <Button variant="outlined" size="small" onClick={loadHistory}>Оновити</Button>
       </Box>
 
       <Grid container spacing={2}>
-        {/* Список запусков */}
+        {/* Список запусків */}
         <Grid size={6}>
           <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
                   <TableCell>ID</TableCell>
-                  <TableCell>Период</TableCell>
+                  <TableCell>Період</TableCell>
                   <TableCell>Статус</TableCell>
-                  <TableCell>Время</TableCell>
+                  <TableCell>Час</TableCell>
                   <TableCell>Записи</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {runs.length === 0 ? (
-                  <TableRow><TableCell colSpan={5} align="center">Нет истории запусков</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={5} align="center">Немає історії запусків</TableCell></TableRow>
                 ) : runs.map((run) => (
                   <TableRow
                     key={run.id}
@@ -403,7 +403,7 @@ export default function App() {
                       </Box>
                     </TableCell>
                     <TableCell sx={{ fontSize: '0.75rem' }}>
-                      {run.start_time ? new Date(run.start_time).toLocaleString('ru-RU') : '-'}
+                      {run.start_time ? new Date(run.start_time).toLocaleString('uk-UA') : '-'}
                     </TableCell>
                     <TableCell>
                       {run.insights_count + run.students_count + run.teachers_count}
@@ -415,25 +415,25 @@ export default function App() {
           </TableContainer>
         </Grid>
 
-        {/* Детали выбранного запуска */}
+        {/* Деталі обраного запуску */}
         <Grid size={6}>
           {selectedRun ? (
             <Box>
               <Paper sx={{ p: 2, mb: 2 }}>
-                <Typography variant="h6" gutterBottom>Детали запуска #{selectedRun.run.id}</Typography>
+                <Typography variant="h6" gutterBottom>Деталі запуску #{selectedRun.run.id}</Typography>
                 <Grid container spacing={1}>
                   <Grid size={6}><Typography variant="body2"><strong>Job ID:</strong> {selectedRun.run.job_id}</Typography></Grid>
                   <Grid size={6}><Typography variant="body2"><strong>Статус:</strong> {selectedRun.run.status}</Typography></Grid>
-                  <Grid size={6}><Typography variant="body2"><strong>Период:</strong> {selectedRun.run.start_date} - {selectedRun.run.end_date}</Typography></Grid>
-                  <Grid size={6}><Typography variant="body2"><strong>Storage:</strong> {selectedRun.run.storage_backend}</Typography></Grid>
-                  <Grid size={6}><Typography variant="body2"><strong>Creatives:</strong> {selectedRun.run.insights_count}</Typography></Grid>
-                  <Grid size={6}><Typography variant="body2"><strong>Студенты:</strong> {selectedRun.run.students_count}</Typography></Grid>
-                  <Grid size={6}><Typography variant="body2"><strong>Учителя:</strong> {selectedRun.run.teachers_count}</Typography></Grid>
-                  <Grid size={6}><Typography variant="body2"><strong>Начало:</strong> {selectedRun.run.start_time ? new Date(selectedRun.run.start_time).toLocaleString('ru-RU') : '-'}</Typography></Grid>
-                  <Grid size={6}><Typography variant="body2"><strong>Конец:</strong> {selectedRun.run.end_time ? new Date(selectedRun.run.end_time).toLocaleString('ru-RU') : '-'}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Період:</strong> {selectedRun.run.start_date} - {selectedRun.run.end_date}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Сховище:</strong> {selectedRun.run.storage_backend}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Креативи:</strong> {selectedRun.run.insights_count}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Студенти:</strong> {selectedRun.run.students_count}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Викладачі:</strong> {selectedRun.run.teachers_count}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Початок:</strong> {selectedRun.run.start_time ? new Date(selectedRun.run.start_time).toLocaleString('uk-UA') : '-'}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Кінець:</strong> {selectedRun.run.end_time ? new Date(selectedRun.run.end_time).toLocaleString('uk-UA') : '-'}</Typography></Grid>
                   {selectedRun.run.error_message && (
                     <Grid size={12}>
-                      <Typography variant="body2" color="error"><strong>Ошибка:</strong> {selectedRun.run.error_message}</Typography>
+                      <Typography variant="body2" color="error"><strong>Помилка:</strong> {selectedRun.run.error_message}</Typography>
                     </Grid>
                   )}
                 </Grid>
@@ -445,7 +445,7 @@ export default function App() {
                   {selectedRun.logs.map((log) => (
                     <div key={log.id}>
                       <span style={{ color: log.level === 'error' ? 'red' : log.level === 'warning' ? 'orange' : 'inherit' }}>
-                        [{log.timestamp ? new Date(log.timestamp).toLocaleTimeString('ru-RU') : '-'}]
+                        [{log.timestamp ? new Date(log.timestamp).toLocaleTimeString('uk-UA') : '-'}]
                       </span>
                       {' '}[{log.level}] {log.message}
                     </div>
@@ -455,7 +455,7 @@ export default function App() {
             </Box>
           ) : (
             <Paper sx={{ p: 3, textAlign: 'center' }}>
-              <Typography variant="body1" color="textSecondary">Выберите запуск из списка для просмотра деталей</Typography>
+              <Typography variant="body1" color="textSecondary">Оберіть запуск зі списку для перегляду деталей</Typography>
             </Paper>
           )}
         </Grid>
@@ -469,41 +469,41 @@ export default function App() {
       <Typography variant="h6" sx={{ mb: 2 }}>Facebook</Typography>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
         <TextField type="password" fullWidth label="META_ACCESS_TOKEN" value={cfg.META_ACCESS_TOKEN?.value || ''} onChange={e=>updateField('META_ACCESS_TOKEN', e.target.value)} />
-        <Help title="Где взять токен?">
-          <Typography>Meta for Developers → Marketing API → System User or App → Generate access token с нужными правами (ads_read, leads_retrieval и доступ к страницам/аккаунту).</Typography>
+        <Help title="Де взяти токен?">
+          <Typography>Meta for Developers → Marketing API → System User or App → Generate access token з потрібними правами (ads_read, leads_retrieval та доступ до сторінок/акаунту).</Typography>
         </Help>
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
         <TextField fullWidth label="META_AD_ACCOUNT_ID (act_*)" value={cfg.META_AD_ACCOUNT_ID?.value || ''} onChange={e=>updateField('META_AD_ACCOUNT_ID', e.target.value)} />
-        <Help title="Где взять act_*?">
-          <Typography>В Ads Manager в URL (act_XXXX) или через API: GET /me/adaccounts.</Typography>
+        <Help title="Де взяти act_*?">
+          <Typography>В Ads Manager в URL (act_XXXX) або через API: GET /me/adaccounts.</Typography>
         </Help>
       </Box>
 
       {/* NetHunt */}
-      <Typography variant="h6" sx={{ mb: 2, mt: 3 }}>NetHunt (Учителя)</Typography>
+      <Typography variant="h6" sx={{ mb: 2, mt: 3 }}>NetHunt (Викладачі)</Typography>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
         <TextField type="password" fullWidth label="NETHUNT_BASIC_AUTH (Basic ...)" value={cfg.NETHUNT_BASIC_AUTH?.value || ''} onChange={e=>updateField('NETHUNT_BASIC_AUTH', e.target.value)} />
-        <Help title="Где взять Basic?">
-          <Typography>В NetHunt: используйте email и API ключ. Формат заголовка: Basic base64(email:api_key). Можно сформировать в любом Base64-генераторе.</Typography>
+        <Help title="Де взяти Basic?">
+          <Typography>В NetHunt: використовуйте email та API ключ. Формат заголовка: Basic base64(email:api_key). Можна сформувати в будь-якому Base64-генераторі.</Typography>
         </Help>
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
         <TextField fullWidth label="NETHUNT_FOLDER_ID" value={cfg.NETHUNT_FOLDER_ID?.value || ''} onChange={e=>updateField('NETHUNT_FOLDER_ID', e.target.value)} />
-        <Help title="Где взять folder_id?">
-          <Typography>Нажмите «NetHunt папки» во вкладке Запуск — возьмите ID нужной папки для учителей.</Typography>
+        <Help title="Де взяти folder_id?">
+          <Typography>Натисніть «NetHunt папки» у вкладці Запуск — візьміть ID потрібної папки для викладачів.</Typography>
         </Help>
       </Box>
 
       {/* AlfaCRM */}
-      <Typography variant="h6" sx={{ mb: 2, mt: 3 }}>AlfaCRM (Студенты)</Typography>
+      <Typography variant="h6" sx={{ mb: 2, mt: 3 }}>AlfaCRM (Студенти)</Typography>
       <TextField fullWidth label="ALFACRM_BASE_URL" value={cfg.ALFACRM_BASE_URL?.value || ''} onChange={e=>updateField('ALFACRM_BASE_URL', e.target.value)} sx={{ mb: 2 }} />
       <TextField fullWidth label="ALFACRM_EMAIL" value={cfg.ALFACRM_EMAIL?.value || ''} onChange={e=>updateField('ALFACRM_EMAIL', e.target.value)} sx={{ mb: 2 }} />
       <TextField type="password" fullWidth label="ALFACRM_API_KEY" value={cfg.ALFACRM_API_KEY?.value || ''} onChange={e=>updateField('ALFACRM_API_KEY', e.target.value)} sx={{ mb: 2 }} />
       <TextField fullWidth label="ALFACRM_COMPANY_ID" value={cfg.ALFACRM_COMPANY_ID?.value || ''} onChange={e=>updateField('ALFACRM_COMPANY_ID', e.target.value)} sx={{ mb: 3 }} />
 
       {/* Excel/Sheets Storage */}
-      <Typography variant="h6" sx={{ mb: 2, mt: 3 }}>Хранилище</Typography>
+      <Typography variant="h6" sx={{ mb: 2, mt: 3 }}>Сховище</Typography>
       <TextField fullWidth label="STORAGE_BACKEND (excel|sheets)" value={cfg.STORAGE_BACKEND?.value || ''} onChange={e=>updateField('STORAGE_BACKEND', e.target.value)} sx={{ mb: 2 }} />
       { (cfg.STORAGE_BACKEND?.value || 'excel') === 'excel' ? (
         <>
@@ -518,7 +518,7 @@ export default function App() {
         </>
       )}
 
-      <Button disabled={saving} variant="contained" onClick={onSave} sx={{ mt: 2 }}>Сохранить</Button>
+      <Button disabled={saving} variant="contained" onClick={onSave} sx={{ mt: 2 }}>Зберегти</Button>
     </Box>
   )
 
@@ -531,8 +531,8 @@ export default function App() {
           </Typography>
           <Tabs value={tab} onChange={(_,v)=>setTab(v)} textColor="inherit" indicatorColor="secondary">
             <Tab label="Запуск" value="run" />
-            <Tab label="История" value="history" />
-            <Tab label="Настройки" value="settings" />
+            <Tab label="Історія" value="history" />
+            <Tab label="Налаштування" value="settings" />
           </Tabs>
         </Box>
       </AppBar>
