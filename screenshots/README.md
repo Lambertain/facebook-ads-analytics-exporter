@@ -1,0 +1,1 @@
+# Screenshots Directory\n\nPlace UI screenshots here for README.md demonstration.\n\n## Required screenshots:\n- main.png - Main interface with progress\n- history.png - History view\n- settings.png - Configuration page\n\n## Tips:\n- Use high-quality PNG format\n- Resolution: 1920x1080 or similar\n- Show realistic (but anonymized) data
