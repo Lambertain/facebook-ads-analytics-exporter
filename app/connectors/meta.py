@@ -1,10 +1,55 @@
 import os
+import logging
 from typing import List, Dict, Any
 
 import requests
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log
+)
+
+logger = logging.getLogger(__name__)
 
 
 GRAPH_URL = "https://graph.facebook.com/v19.0"
+
+DEFAULT_TIMEOUT = int(os.getenv("META_API_TIMEOUT", "30"))
+MAX_RETRIES = int(os.getenv("META_API_MAX_RETRIES", "3"))
+
+
+@retry(
+    stop=stop_after_attempt(MAX_RETRIES),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    retry=retry_if_exception_type((requests.exceptions.Timeout, requests.exceptions.ConnectionError)),
+    before_sleep=before_sleep_log(logger, logging.WARNING)
+)
+def _make_meta_request(url: str, params: dict, timeout: int = DEFAULT_TIMEOUT) -> dict:
+    try:
+        resp = requests.get(url, params=params, timeout=timeout)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 429:
+            logger.warning(f"Meta API rate limit hit: {e}")
+            raise
+        elif e.response.status_code >= 500:
+            logger.error(f"Meta API server error: {e.response.status_code} - {e.response.text}")
+            raise
+        else:
+            logger.error(f"Meta API client error: {e.response.status_code} - {e.response.text}")
+            raise
+    except requests.exceptions.Timeout:
+        logger.error(f"Meta API timeout after {timeout}s: {url}")
+        raise
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"Meta API connection error: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected Meta API error: {type(e).__name__}: {e}")
+        raise
 
 
 def fetch_insights(ad_account_id: str, access_token: str, date_from: str, date_to: str, level: str = "campaign") -> List[Dict[str, Any]]:
@@ -40,18 +85,26 @@ def fetch_insights(ad_account_id: str, access_token: str, date_from: str, date_t
     }
 
     results: List[Dict[str, Any]] = []
-    while True:
-        resp = requests.get(url, params=params, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
-        results.extend(data.get("data", []))
-        paging = data.get("paging", {})
-        next_url = paging.get("next")
-        if not next_url:
-            break
-        url = next_url
-        params = {}  # next contains full URL
-    return results
+    page_count = 0
+    try:
+        while True:
+            page_count += 1
+            logger.info(f"Fetching Meta insights page {page_count} for account {ad_account_id}")
+            data = _make_meta_request(url, params)
+            results.extend(data.get("data", []))
+            paging = data.get("paging", {})
+            next_url = paging.get("next")
+            if not next_url:
+                break
+            url = next_url
+            params = {}
+        logger.info(f"Successfully fetched {len(results)} insights from {page_count} pages")
+        return results
+    except Exception as e:
+        logger.error(f"Failed to fetch Meta insights after {page_count} pages: {type(e).__name__}: {e}")
+        if results:
+            logger.warning(f"Returning partial results: {len(results)} insights from {page_count - 1} pages")
+        return results
 
 
 def fetch_leads(access_token: str, date_from: str, date_to: str) -> List[Dict[str, Any]]:
@@ -62,8 +115,14 @@ def fetch_leads(access_token: str, date_from: str, date_to: str) -> List[Dict[st
     """
     results: List[Dict[str, Any]] = []
 
-    # Step 1: list pages the token can access
-    pages = _get_all(f"{GRAPH_URL}/me/accounts", access_token)
+    try:
+        logger.info("Starting Meta leads fetch process")
+        pages = _get_all(f"{GRAPH_URL}/me/accounts", access_token)
+        logger.info(f"Found {len(pages)} pages to process")
+    except Exception as e:
+        logger.error(f"Failed to list Meta pages: {type(e).__name__}: {e}")
+        return []
+
     for page in pages:
         page_id = page.get("id")
         if not page_id:
@@ -82,39 +141,43 @@ def fetch_leads(access_token: str, date_from: str, date_to: str) -> List[Dict[st
                               f"{{'field':'time_created','operator':'LESS_THAN','value': '{date_to}T23:59:59+0000'}}]",
                 "limit": 500,
             }
-            while True:
-                resp = requests.get(url, params=params, timeout=60)
-                resp.raise_for_status()
-                data = resp.json()
-                for lead in data.get("data", []):
-                    results.append({
-                        "id": lead.get("id"),
-                        "created_time": lead.get("created_time"),
-                        "field_data": lead.get("field_data", []),
-                        "page_id": page_id,
-                        "form_id": form_id,
-                    })
-                paging = data.get("paging", {})
-                next_url = paging.get("next")
-                if not next_url:
-                    break
-                url = next_url
-                params = {}
+            try:
+                while True:
+                    data = _make_meta_request(url, params)
+                    for lead in data.get("data", []):
+                        results.append({
+                            "id": lead.get("id"),
+                            "created_time": lead.get("created_time"),
+                            "field_data": lead.get("field_data", []),
+                            "page_id": page_id,
+                            "form_id": form_id,
+                        })
+                    paging = data.get("paging", {})
+                    next_url = paging.get("next")
+                    if not next_url:
+                        break
+                    url = next_url
+                    params = {}
+            except Exception as e:
+                logger.warning(f"Failed to fetch leads for form {form_id}: {type(e).__name__}: {e}")
+                continue
 
+    logger.info(f"Successfully fetched {len(results)} total leads")
     return results
 
 
 def _get_all(url: str, access_token: str):
     params = {"access_token": access_token, "limit": 100}
     results = []
+    page_count = 0
     while True:
-        resp = requests.get(url, params=params, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
+        page_count += 1
+        data = _make_meta_request(url, params)
         results.extend(data.get("data", []))
         next_url = data.get("paging", {}).get("next")
         if not next_url:
             break
         url = next_url
         params = {}
+    logger.debug(f"Fetched {len(results)} items from {page_count} pages")
     return results

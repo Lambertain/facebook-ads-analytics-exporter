@@ -9,3 +9,4 @@ slowapi==0.1.9
 python-multipart==0.0.9
 sqlalchemy>=2.0.34  # Python 3.13 compatible
 alembic==1.13.1
+tenacity>=9.0.0
