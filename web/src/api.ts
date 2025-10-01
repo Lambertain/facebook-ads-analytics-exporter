@@ -54,3 +54,61 @@ export async function listAlfaCompanies() {
   return r.json()
 }
 
+// Student data types (33 fields matching mapping.json)
+export interface Student {
+  "Посилання на рекламну компанію": string
+  "Дата аналізу": string
+  "Період аналізу запущеної компанії": string
+  "Витрачений бюджет в $": number
+  "Місце знаходження (країни чи міста)": string
+  "Кількість лідів": number
+  "Перевірка лідів автоматичний": string
+  "Не розібрані": number
+  "Встанов. контакт (ЦА)": number
+  "В опрацюванні (ЦА)": number
+  "Назначений пробний\n(ЦА)": number
+  "Проведений пробний\n(ЦА)": number
+  "Чекаємо оплату": number
+  "Купили (ЦА)": number
+  "Архів (ЦА)": number
+  "Недозвон \n(не ЦА)": number
+  "Архів\n (не ЦА)": number
+  "Кількість цільових лідів": number
+  "Кількість не цільових лідів": number
+  "% цільових лідів": number
+  "% не цільових лідів": number
+  "% Встан. контакт": number
+  "% В опрацюванні (ЦА)": number
+  "% конверсія": number
+  "% архів": number
+  "% недозвон": number
+  "Ціна / ліда": number
+  "Ціна / цільового ліда": number
+  "Нотатки": string
+  "% Назначений пробний": number
+  "%\nПроведений пробний від загальних лідів\n(ЦА)": number
+  "%\nПроведений пробний від назначених пробних": number
+  "Конверсія з проведеного пробного в продаж": number
+}
+
+export interface StudentsResponse {
+  students: Student[]
+  count: number
+}
+
+export async function getStudents(params?: {
+  start_date?: string
+  end_date?: string
+  enrich?: boolean
+}): Promise<StudentsResponse> {
+  const queryParams = new URLSearchParams()
+  if (params?.start_date) queryParams.append('start_date', params.start_date)
+  if (params?.end_date) queryParams.append('end_date', params.end_date)
+  if (params?.enrich !== undefined) queryParams.append('enrich', String(params.enrich))
+
+  const url = `/api/students${queryParams.toString() ? '?' + queryParams.toString() : ''}`
+  const r = await fetch(url)
+  if (!r.ok) throw new Error('Failed to load students data')
+  return r.json()
+}
+

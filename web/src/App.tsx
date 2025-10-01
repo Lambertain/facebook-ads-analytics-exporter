@@ -10,6 +10,7 @@ import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
 import { DatePicker, LocalizationProvider } from '@mui/x-date-pickers'
 import dayjs, { Dayjs } from 'dayjs'
 import { ConfigMap, getConfig, inspectExcelHeaders, listAlfaCompanies, listNetHuntFolders, openEventStream, startJob, updateConfig } from './api'
+import StudentsTable from './StudentsTable'
 
 type TabKey = 'run' | 'settings' | 'history'
 type DataTabKey = 'students' | 'teachers' | 'ads'
@@ -271,40 +272,7 @@ export default function App() {
               </TableContainer>
             )}
 
-            {dataTab === 'students' && (
-              <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
-                <Table size="small" stickyHeader>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Посилання на РК</TableCell>
-                      <TableCell>Дата аналізу</TableCell>
-                      <TableCell>Бюджет $</TableCell>
-                      <TableCell>Локація</TableCell>
-                      <TableCell>Лідів</TableCell>
-                      <TableCell>Куплено</TableCell>
-                      <TableCell>% конверсія</TableCell>
-                      <TableCell>Ціна/лід</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {studentsData.length === 0 ? (
-                      <TableRow><TableCell colSpan={8} align="center">Немає даних. Запустіть процес.</TableCell></TableRow>
-                    ) : studentsData.map((row, i) => (
-                      <TableRow key={i}>
-                        <TableCell>{row['Посилання на рекламну компанію']}</TableCell>
-                        <TableCell>{row['Дата аналізу']}</TableCell>
-                        <TableCell>{row['Витрачений бюджет в $']}</TableCell>
-                        <TableCell>{row['Місце знаходження (країни чи міста)']}</TableCell>
-                        <TableCell>{row['Кількість лідів']}</TableCell>
-                        <TableCell>{row['Купили (ЦА)']}</TableCell>
-                        <TableCell>{row['% конверсія']}</TableCell>
-                        <TableCell>{row['Ціна / ліда']}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
+            {dataTab === 'students' && <StudentsTable />}
 
             {dataTab === 'teachers' && (
               <TableContainer component={Paper} sx={{ maxHeight: 600 }}>

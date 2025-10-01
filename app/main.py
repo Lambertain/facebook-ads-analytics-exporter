@@ -1,8 +1,10 @@
 import asyncio
 import os
 import uuid
+import json
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List
+import openpyxl
 
 from fastapi import FastAPI, BackgroundTasks, Request, Depends
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
@@ -302,6 +304,162 @@ async def get_run_details(request: Request, run_id: int):
             }
     except Exception as e:
         return JSONResponse({"error": f"Помилка бази даних: {str(e)}"}, status_code=500)
+
+
+async def enrich_students_with_alfacrm(students_from_excel: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Обогащает данные студентов из Excel свежими данными из AlfaCRM.
+
+    Args:
+        students_from_excel: Список студентов из Excel файла
+
+    Returns:
+        Обогащенный список студентов
+    """
+    if not (os.getenv("ALFACRM_BASE_URL") and os.getenv("ALFACRM_EMAIL")
+            and os.getenv("ALFACRM_API_KEY") and os.getenv("ALFACRM_COMPANY_ID")):
+        return students_from_excel
+
+    try:
+        alfacrm_students = []
+        page = 1
+        while True:
+            data = crm_tools.alfacrm_list_students(page=page, page_size=200)
+            items = data.get("items") or data.get("data") or data.get("list") or []
+            if not isinstance(items, list):
+                break
+
+            for s in items:
+                flat = {}
+                if isinstance(s, dict):
+                    for k, v in s.items():
+                        if isinstance(v, (dict, list)):
+                            try:
+                                flat[k] = json.dumps(v, ensure_ascii=False)
+                            except Exception:
+                                flat[k] = str(v)
+                        else:
+                            flat[k] = v
+                alfacrm_students.append(flat)
+
+            if len(items) < 200:
+                break
+            page += 1
+
+        alfacrm_lookup = {}
+        for student in alfacrm_students:
+            student_id = student.get("id") or student.get("student_id")
+            email = student.get("email")
+            if student_id:
+                alfacrm_lookup[str(student_id)] = student
+            if email:
+                alfacrm_lookup[email] = student
+
+        enriched = []
+        for excel_student in students_from_excel:
+            student_id = excel_student.get("id") or excel_student.get("student_id")
+            email = excel_student.get("email") or excel_student.get("Email")
+
+            crm_data = None
+            if student_id and str(student_id) in alfacrm_lookup:
+                crm_data = alfacrm_lookup[str(student_id)]
+            elif email and email in alfacrm_lookup:
+                crm_data = alfacrm_lookup[email]
+
+            if crm_data:
+                merged = {**excel_student, **crm_data}
+            else:
+                merged = excel_student
+
+            enriched.append(merged)
+
+        return enriched
+
+    except Exception as e:
+        print(f"Попередження: обогащення з AlfaCRM не вдалося: {e}")
+        return students_from_excel
+
+
+@app.get("/api/students")
+@limiter.limit("30/minute")
+async def get_students(request: Request, start_date: str = None, end_date: str = None, enrich: bool = True):
+    """
+    Get students data with all 33 fields from Students Analysis structure.
+
+    Query params:
+    - start_date: Filter by analysis date (YYYY-MM-DD)
+    - end_date: Filter by analysis date (YYYY-MM-DD)
+    - enrich: Enrich with fresh AlfaCRM data (default: True)
+    """
+    try:
+        backend = os.getenv("STORAGE_BACKEND", "excel").lower()
+
+        if backend == "excel":
+            excel_path = os.getenv("EXCEL_STUDENTS_PATH")
+            if not excel_path or not os.path.exists(excel_path):
+                return JSONResponse({"error": "Файл студентів не знайдено"}, status_code=404)
+
+            # Read from Excel
+            from openpyxl import load_workbook
+            mapping = load_mapping()
+            sheet_name = mapping.get("students", {}).get("sheet_name", "Students")
+
+            wb = load_workbook(excel_path, read_only=True, data_only=True)
+            if sheet_name not in wb.sheetnames:
+                return JSONResponse({"error": f"Аркуш '{sheet_name}' не знайдено"}, status_code=404)
+
+            ws = wb[sheet_name]
+
+            # Get headers from first row
+            headers_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+            if not headers_row:
+                return JSONResponse({"error": "Заголовки не знайдено"}, status_code=404)
+
+            headers = [str(h) if h is not None else '' for h in headers_row]
+
+            # Read all data rows
+            students = []
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if not any(row):  # Skip empty rows
+                    continue
+
+                student_dict = {}
+                for idx, header in enumerate(headers):
+                    value = row[idx] if idx < len(row) else None
+                    # Convert datetime to string
+                    if hasattr(value, 'isoformat'):
+                        value = value.isoformat()
+                    student_dict[header] = value
+
+                students.append(student_dict)
+
+            wb.close()
+
+            # Filter by date if provided
+            if start_date or end_date:
+                filtered = []
+                for s in students:
+                    date_str = s.get("Дата аналізу", "")
+                    if date_str:
+                        # Simple date comparison
+                        if start_date and str(date_str) < start_date:
+                            continue
+                        if end_date and str(date_str) > end_date:
+                            continue
+                    filtered.append(s)
+                students = filtered
+
+            # Enrich with AlfaCRM data if requested
+            if enrich:
+                students = await enrich_students_with_alfacrm(students)
+
+            return {"students": students, "count": len(students)}
+        else:
+            # Google Sheets backend - to be implemented
+            return JSONResponse({"error": "Google Sheets backend поки не підтримується"}, status_code=501)
+
+    except Exception as e:
+        return JSONResponse({"error": f"Помилка читання даних: {str(e)}"}, status_code=500)
 
 
 @app.post("/api/download-excel")
