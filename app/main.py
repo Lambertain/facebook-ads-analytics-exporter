@@ -376,7 +376,7 @@ async def enrich_students_with_alfacrm(students_from_excel: List[Dict[str, Any]]
         return enriched
 
     except Exception as e:
-        print(f"Попередження: обогащення з AlfaCRM не вдалося: {e}")
+        print(f"Попередження: збагачення даних з AlfaCRM не вдалося: {e}")
         return students_from_excel
 
 
@@ -632,7 +632,7 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
                 db.add(log_entry)
                 db.commit()
         except Exception as e:
-            print(f"Failed to log to DB: {e}")
+            print(f"Помилка запису логу в БД: {e}")
 
     try:
         progress.update(job_id, 2, "Перевірка облікових даних")
@@ -642,7 +642,7 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
         meta_token = os.getenv("META_ACCESS_TOKEN")
         ad_account_id = os.getenv("META_AD_ACCOUNT_ID")
         if not meta_token or not ad_account_id:
-            raise RuntimeError("META_ACCESS_TOKEN or META_AD_ACCOUNT_ID not set")
+            raise RuntimeError("META_ACCESS_TOKEN або META_AD_ACCOUNT_ID не налаштовані")
 
         backend = os.getenv("STORAGE_BACKEND", "sheets").lower()
         gs_client = None
@@ -650,7 +650,7 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
         if backend == "sheets":
             gs_client = gs_conn.get_client()
             if not sheet_id:
-                raise RuntimeError("GOOGLE_SHEET_ID is required when STORAGE_BACKEND=sheets")
+                raise RuntimeError("GOOGLE_SHEET_ID обов'язковий коли STORAGE_BACKEND=sheets")
 
         # 1) Fetch Ads insights
         progress.update(job_id, 10, "Отримання статистики Meta Ads (рівень оголошень)")
