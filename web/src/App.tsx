@@ -11,8 +11,31 @@ import { DatePicker, LocalizationProvider } from '@mui/x-date-pickers'
 import dayjs, { Dayjs } from 'dayjs'
 import { ConfigMap, getConfig, inspectExcelHeaders, listAlfaCompanies, listNetHuntFolders, openEventStream, startJob, updateConfig } from './api'
 
-type TabKey = 'run' | 'settings'
+type TabKey = 'run' | 'settings' | 'history'
 type DataTabKey = 'students' | 'teachers' | 'ads'
+
+interface PipelineRun {
+  id: number
+  job_id: string
+  start_time: string | null
+  end_time: string | null
+  status: string
+  start_date: string
+  end_date: string
+  sheet_id: string | null
+  storage_backend: string | null
+  insights_count: number
+  students_count: number
+  teachers_count: number
+  error_message: string | null
+}
+
+interface RunLog {
+  id: number
+  timestamp: string
+  level: string
+  message: string
+}
 
 function Help({ title, children }: { title: string, children: JSX.Element }) {
   const [open, setOpen] = useState(false)
@@ -52,6 +75,11 @@ export default function App() {
   const [teachersData, setTeachersData] = useState<any[]>([])
   const [adsData, setAdsData] = useState<any[]>([])
 
+  // History states
+  const [runs, setRuns] = useState<PipelineRun[]>([])
+  const [selectedRun, setSelectedRun] = useState<{ run: PipelineRun; logs: RunLog[] } | null>(null)
+  const [historyFilter, setHistoryFilter] = useState<string>('')
+
   useEffect(() => { (async () => {
     try {
       const data = await getConfig()
@@ -59,6 +87,33 @@ export default function App() {
       if (data.GOOGLE_SHEET_ID?.value) setSheetId(data.GOOGLE_SHEET_ID.value)
     } catch (e) { setSnack('Не удалось загрузить конфиг') }
   })() }, [])
+
+  // Load history when history tab is opened
+  useEffect(() => {
+    if (tab === 'history') {
+      loadHistory()
+    }
+  }, [tab])
+
+  async function loadHistory() {
+    try {
+      const response = await fetch(`/api/runs?limit=100&status=${historyFilter}`)
+      const data = await response.json()
+      setRuns(data.runs || [])
+    } catch (e) {
+      setSnack('Не удалось загрузить историю')
+    }
+  }
+
+  async function loadRunDetails(runId: number) {
+    try {
+      const response = await fetch(`/api/runs/${runId}`)
+      const data = await response.json()
+      setSelectedRun(data)
+    } catch (e) {
+      setSnack('Не удалось загрузить детали запуска')
+    }
+  }
 
   const storageBackend = cfg?.STORAGE_BACKEND?.value || 'excel'
 
@@ -298,6 +353,116 @@ export default function App() {
     </LocalizationProvider>
   )
 
+  const historyTab = (
+    <Box sx={{ mt: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2, gap: 2 }}>
+        <Typography variant="h5">История запусков</Typography>
+        <Button variant="outlined" size="small" onClick={() => setHistoryFilter('')}>Все</Button>
+        <Button variant="outlined" size="small" onClick={() => setHistoryFilter('success')}>Успешные</Button>
+        <Button variant="outlined" size="small" onClick={() => setHistoryFilter('error')}>Ошибки</Button>
+        <Button variant="outlined" size="small" onClick={loadHistory}>Обновить</Button>
+      </Box>
+
+      <Grid container spacing={2}>
+        {/* Список запусков */}
+        <Grid size={6}>
+          <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
+            <Table size="small" stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell>ID</TableCell>
+                  <TableCell>Период</TableCell>
+                  <TableCell>Статус</TableCell>
+                  <TableCell>Время</TableCell>
+                  <TableCell>Записи</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {runs.length === 0 ? (
+                  <TableRow><TableCell colSpan={5} align="center">Нет истории запусков</TableCell></TableRow>
+                ) : runs.map((run) => (
+                  <TableRow
+                    key={run.id}
+                    hover
+                    onClick={() => loadRunDetails(run.id)}
+                    sx={{ cursor: 'pointer', bgcolor: selectedRun?.run.id === run.id ? '#f0f0f0' : 'inherit' }}
+                  >
+                    <TableCell>{run.id}</TableCell>
+                    <TableCell>{run.start_date} - {run.end_date}</TableCell>
+                    <TableCell>
+                      <Box sx={{
+                        display: 'inline-block',
+                        px: 1,
+                        py: 0.5,
+                        borderRadius: 1,
+                        fontSize: '0.75rem',
+                        bgcolor: run.status === 'success' ? '#d4edda' : run.status === 'error' ? '#f8d7da' : '#fff3cd',
+                        color: run.status === 'success' ? '#155724' : run.status === 'error' ? '#721c24' : '#856404'
+                      }}>
+                        {run.status}
+                      </Box>
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.75rem' }}>
+                      {run.start_time ? new Date(run.start_time).toLocaleString('ru-RU') : '-'}
+                    </TableCell>
+                    <TableCell>
+                      {run.insights_count + run.students_count + run.teachers_count}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Grid>
+
+        {/* Детали выбранного запуска */}
+        <Grid size={6}>
+          {selectedRun ? (
+            <Box>
+              <Paper sx={{ p: 2, mb: 2 }}>
+                <Typography variant="h6" gutterBottom>Детали запуска #{selectedRun.run.id}</Typography>
+                <Grid container spacing={1}>
+                  <Grid size={6}><Typography variant="body2"><strong>Job ID:</strong> {selectedRun.run.job_id}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Статус:</strong> {selectedRun.run.status}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Период:</strong> {selectedRun.run.start_date} - {selectedRun.run.end_date}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Storage:</strong> {selectedRun.run.storage_backend}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Creatives:</strong> {selectedRun.run.insights_count}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Студенты:</strong> {selectedRun.run.students_count}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Учителя:</strong> {selectedRun.run.teachers_count}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Начало:</strong> {selectedRun.run.start_time ? new Date(selectedRun.run.start_time).toLocaleString('ru-RU') : '-'}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Конец:</strong> {selectedRun.run.end_time ? new Date(selectedRun.run.end_time).toLocaleString('ru-RU') : '-'}</Typography></Grid>
+                  {selectedRun.run.error_message && (
+                    <Grid size={12}>
+                      <Typography variant="body2" color="error"><strong>Ошибка:</strong> {selectedRun.run.error_message}</Typography>
+                    </Grid>
+                  )}
+                </Grid>
+              </Paper>
+
+              <Paper sx={{ p: 2 }}>
+                <Typography variant="h6" gutterBottom>Логи</Typography>
+                <Box sx={{ maxHeight: 400, overflow: 'auto', fontFamily: 'monospace', fontSize: '0.8rem', bgcolor: '#f7f7f7', p: 1, borderRadius: 1 }}>
+                  {selectedRun.logs.map((log) => (
+                    <div key={log.id}>
+                      <span style={{ color: log.level === 'error' ? 'red' : log.level === 'warning' ? 'orange' : 'inherit' }}>
+                        [{log.timestamp ? new Date(log.timestamp).toLocaleTimeString('ru-RU') : '-'}]
+                      </span>
+                      {' '}[{log.level}] {log.message}
+                    </div>
+                  ))}
+                </Box>
+              </Paper>
+            </Box>
+          ) : (
+            <Paper sx={{ p: 3, textAlign: 'center' }}>
+              <Typography variant="body1" color="textSecondary">Выберите запуск из списка для просмотра деталей</Typography>
+            </Paper>
+          )}
+        </Grid>
+      </Grid>
+    </Box>
+  )
+
   const settingsTab = cfg && (
     <Box sx={{ mt: 2, maxWidth: 600 }}>
       {/* Facebook */}
@@ -366,12 +531,13 @@ export default function App() {
           </Typography>
           <Tabs value={tab} onChange={(_,v)=>setTab(v)} textColor="inherit" indicatorColor="secondary">
             <Tab label="Запуск" value="run" />
+            <Tab label="История" value="history" />
             <Tab label="Настройки" value="settings" />
           </Tabs>
         </Box>
       </AppBar>
       <Container maxWidth="lg" sx={{ mt: 2, mb: 4 }}>
-        {tab === 'run' ? runTab : settingsTab}
+        {tab === 'run' ? runTab : tab === 'history' ? historyTab : settingsTab}
       </Container>
       <Snackbar open={!!snack} onClose={()=>setSnack(null)} message={snack||''} autoHideDuration={3000} />
     </Box>

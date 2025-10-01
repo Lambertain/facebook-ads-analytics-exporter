@@ -23,11 +23,18 @@ from .connectors import crm as crm_tools
 from .config_store import get_config_masked, set_config
 from .connectors import crm as crm_conn
 from .middleware.auth import verify_api_key
+from .database import init_db, get_db
+from .models import PipelineRun, RunLog
 
 
 load_dotenv()
 
 app = FastAPI(title="Ads → Sheets → CRM")
+
+# Initialize database on startup
+@app.on_event("startup")
+def startup_event():
+    init_db()
 
 # Security: Rate limiting
 limiter = Limiter(key_func=get_remote_address)
@@ -196,6 +203,107 @@ async def update_config(
     return {"status": "ok"}
 
 
+@app.get("/api/runs")
+@limiter.limit("30/minute")
+async def get_runs(
+    request: Request,
+    status: str = None,
+    limit: int = 50,
+    offset: int = 0
+):
+    """
+    Get pipeline run history with optional filtering.
+
+    Query params:
+    - status: Filter by status (success, error, running)
+    - limit: Maximum number of results (default: 50, max: 100)
+    - offset: Pagination offset (default: 0)
+    """
+    try:
+        # Limit maximum results
+        limit = min(limit, 100)
+
+        with get_db() as db:
+            query = db.query(PipelineRun)
+
+            # Apply status filter if provided
+            if status:
+                query = query.filter(PipelineRun.status == status)
+
+            # Order by most recent first
+            query = query.order_by(PipelineRun.start_time.desc())
+
+            # Apply pagination
+            runs = query.offset(offset).limit(limit).all()
+
+            # Convert to dict
+            result = []
+            for run in runs:
+                result.append({
+                    "id": run.id,
+                    "job_id": run.job_id,
+                    "start_time": run.start_time.isoformat() if run.start_time else None,
+                    "end_time": run.end_time.isoformat() if run.end_time else None,
+                    "status": run.status,
+                    "start_date": run.start_date,
+                    "end_date": run.end_date,
+                    "sheet_id": run.sheet_id,
+                    "storage_backend": run.storage_backend,
+                    "insights_count": run.insights_count,
+                    "students_count": run.students_count,
+                    "teachers_count": run.teachers_count,
+                    "error_message": run.error_message
+                })
+
+            return {"runs": result, "count": len(result)}
+    except Exception as e:
+        return JSONResponse({"error": f"Database error: {str(e)}"}, status_code=500)
+
+
+@app.get("/api/runs/{run_id}")
+@limiter.limit("30/minute")
+async def get_run_details(request: Request, run_id: int):
+    """Get detailed information about a specific run including logs."""
+    try:
+        with get_db() as db:
+            run = db.query(PipelineRun).filter(PipelineRun.id == run_id).first()
+
+            if not run:
+                return JSONResponse({"error": "Run not found"}, status_code=404)
+
+            # Get logs for this run
+            logs = db.query(RunLog).filter(RunLog.run_id == run_id).order_by(RunLog.timestamp).all()
+
+            return {
+                "run": {
+                    "id": run.id,
+                    "job_id": run.job_id,
+                    "start_time": run.start_time.isoformat() if run.start_time else None,
+                    "end_time": run.end_time.isoformat() if run.end_time else None,
+                    "status": run.status,
+                    "start_date": run.start_date,
+                    "end_date": run.end_date,
+                    "sheet_id": run.sheet_id,
+                    "storage_backend": run.storage_backend,
+                    "insights_count": run.insights_count,
+                    "students_count": run.students_count,
+                    "teachers_count": run.teachers_count,
+                    "error_message": run.error_message
+                },
+                "logs": [
+                    {
+                        "id": log.id,
+                        "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                        "level": log.level,
+                        "message": log.message
+                    }
+                    for log in logs
+                ]
+            }
+    except Exception as e:
+        return JSONResponse({"error": f"Database error: {str(e)}"}, status_code=500)
+
+
 @app.post("/api/download-excel")
 async def download_excel(payload: Dict[str, Any]):
     from fastapi.responses import FileResponse
@@ -269,8 +377,35 @@ async def download_excel(payload: Dict[str, Any]):
 
 
 async def run_pipeline(job_id: str, params: Dict[str, Any]):
+    # Create database record for this run
+    with get_db() as db:
+        db_run = PipelineRun(
+            job_id=job_id,
+            start_date=params["start_date"],
+            end_date=params["end_date"],
+            sheet_id=params.get("sheet_id"),
+            storage_backend=os.getenv("STORAGE_BACKEND", "sheets"),
+            status="running"
+        )
+        db.add(db_run)
+        db.commit()
+        db.refresh(db_run)
+        run_id = db_run.id
+
+    def log_to_db(message: str, level: str = "info"):
+        """Helper to save log messages to database."""
+        try:
+            with get_db() as db:
+                log_entry = RunLog(run_id=run_id, message=message, level=level)
+                db.add(log_entry)
+                db.commit()
+        except Exception as e:
+            print(f"Failed to log to DB: {e}")
+
     try:
         progress.update(job_id, 2, "Validating credentials")
+        log_to_db("Starting pipeline execution")
+
         # Meta credentials
         meta_token = os.getenv("META_ACCESS_TOKEN")
         ad_account_id = os.getenv("META_AD_ACCOUNT_ID")
@@ -409,9 +544,32 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
                 progress.log(job_id, f"Teachers written: {len(teachers)} rows")
 
         progress.update(job_id, 100, "done")
+        log_to_db("Pipeline completed successfully")
+
+        # Update database record with results
+        with get_db() as db:
+            db_run = db.query(PipelineRun).filter(PipelineRun.id == run_id).first()
+            if db_run:
+                db_run.status = "success"
+                db_run.end_time = datetime.utcnow()
+                db_run.insights_count = len(insights)
+                db_run.students_count = len(students)
+                db_run.teachers_count = len(teachers)
+                db.commit()
+
     except Exception as e:
         progress.log(job_id, f"ERROR: {e}")
         progress.set_status(job_id, "error")
+        log_to_db(f"ERROR: {e}", level="error")
+
+        # Update database record with error
+        with get_db() as db:
+            db_run = db.query(PipelineRun).filter(PipelineRun.id == run_id).first()
+            if db_run:
+                db_run.status = "error"
+                db_run.end_time = datetime.utcnow()
+                db_run.error_message = str(e)
+                db.commit()
 
 
 # Serve index.html for root path
