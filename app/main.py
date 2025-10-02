@@ -81,6 +81,67 @@ WEB_DIST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "dist
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 
 
+async def run_analytics_task(job_id: str, params: Dict[str, Any]):
+    """
+    Background task для виконання аналітики через AnalyticsProcessor.
+    """
+    try:
+        progress.update(job_id, 5, "Ініціалізація процесора")
+
+        processor = AnalyticsProcessor(
+            campaign_type=params["campaign_type"],
+            date_start=params["date_start"],
+            date_stop=params["date_stop"]
+        )
+
+        progress.update(job_id, 20, "Обробка кампаній...")
+        logger.info(f"Starting analytics for {params['campaign_type']}")
+
+        results = processor.process()
+
+        progress.update(job_id, 90, "Збереження результатів")
+
+        # Зберігаємо результати в Excel
+        backend = os.getenv("STORAGE_BACKEND", "excel").lower()
+        if backend == "excel":
+            campaign_type = params["campaign_type"]
+            if campaign_type == "students":
+                excel_path = os.getenv("EXCEL_STUDENTS_PATH")
+            else:
+                excel_path = os.getenv("EXCEL_TEACHERS_PATH")
+
+            if excel_path:
+                from openpyxl import load_workbook, Workbook
+
+                # Створюємо або завантажуємо Excel файл
+                if os.path.exists(excel_path):
+                    wb = load_workbook(excel_path)
+                    ws = wb.active
+                else:
+                    wb = Workbook()
+                    ws = wb.active
+                    # Додаємо заголовки з першого результату
+                    if results:
+                        headers = list(results[0].keys())
+                        ws.append(headers)
+
+                # Додаємо дані
+                for row_data in results:
+                    row = [row_data.get(h) for h in results[0].keys()]
+                    ws.append(row)
+
+                wb.save(excel_path)
+                progress.log(job_id, f"Збережено {len(results)} кампаній в {excel_path}")
+
+        progress.update(job_id, 100, "done")
+        logger.info(f"Analytics completed: {len(results)} campaigns processed")
+
+    except Exception as e:
+        logger.error(f"Analytics failed: {e}")
+        progress.log(job_id, f"ERROR: {e}")
+        progress.set_status(job_id, "error")
+
+
 @app.post("/api/run")
 @limiter.limit("5/minute")
 async def run_analytics(
@@ -768,67 +829,6 @@ async def download_excel(payload: Dict[str, Any]):
         )
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-
-
-async def run_analytics_task(job_id: str, params: Dict[str, Any]):
-    """
-    Background task для виконання аналітики через AnalyticsProcessor.
-    """
-    try:
-        progress.update(job_id, 5, "Ініціалізація процесора")
-
-        processor = AnalyticsProcessor(
-            campaign_type=params["campaign_type"],
-            date_start=params["date_start"],
-            date_stop=params["date_stop"]
-        )
-
-        progress.update(job_id, 20, "Обробка кампаній...")
-        logger.info(f"Starting analytics for {params['campaign_type']}")
-
-        results = processor.process()
-
-        progress.update(job_id, 90, "Збереження результатів")
-
-        # Зберігаємо результати в Excel
-        backend = os.getenv("STORAGE_BACKEND", "excel").lower()
-        if backend == "excel":
-            campaign_type = params["campaign_type"]
-            if campaign_type == "students":
-                excel_path = os.getenv("EXCEL_STUDENTS_PATH")
-            else:
-                excel_path = os.getenv("EXCEL_TEACHERS_PATH")
-
-            if excel_path:
-                from openpyxl import load_workbook, Workbook
-
-                # Створюємо або завантажуємо Excel файл
-                if os.path.exists(excel_path):
-                    wb = load_workbook(excel_path)
-                    ws = wb.active
-                else:
-                    wb = Workbook()
-                    ws = wb.active
-                    # Додаємо заголовки з першого результату
-                    if results:
-                        headers = list(results[0].keys())
-                        ws.append(headers)
-
-                # Додаємо дані
-                for row_data in results:
-                    row = [row_data.get(h) for h in results[0].keys()]
-                    ws.append(row)
-
-                wb.save(excel_path)
-                progress.log(job_id, f"Збережено {len(results)} кампаній в {excel_path}")
-
-        progress.update(job_id, 100, "done")
-        logger.info(f"Analytics completed: {len(results)} campaigns processed")
-
-    except Exception as e:
-        logger.error(f"Analytics failed: {e}")
-        progress.log(job_id, f"ERROR: {e}")
-        progress.set_status(job_id, "error")
 
 
 async def run_pipeline(job_id: str, params: Dict[str, Any]):
