@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AppBar, Box, Button, Container, Dialog, DialogActions, DialogContent, DialogTitle,
+  Alert, AppBar, Box, Button, Container, Dialog, DialogActions, DialogContent, DialogTitle,
   Grid2 as Grid, IconButton, LinearProgress, Snackbar, Tab, Tabs, TextField, Tooltip, Typography, InputAdornment,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Link
 } from '@mui/material'
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline'
 import FolderOpenIcon from '@mui/icons-material/FolderOpen'
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
 import { DatePicker, LocalizationProvider } from '@mui/x-date-pickers'
 import dayjs, { Dayjs } from 'dayjs'
-import { ConfigMap, getConfig, inspectExcelHeaders, listAlfaCompanies, listNetHuntFolders, openEventStream, startJob, updateConfig } from './api'
+import { ConfigMap, getConfig, inspectExcelHeaders, listAlfaCompanies, listNetHuntFolders, openEventStream, startJob, runAnalytics, updateConfig } from './api'
 import StudentsTable from './StudentsTable'
 
 type TabKey = 'run' | 'settings' | 'history'
@@ -144,11 +144,25 @@ export default function App() {
     setProgress(5)
     setStatus('running')
     try {
-      const data = await startJob({
-        start_date: start?.format('YYYY-MM-DD') || '',
-        end_date: end?.format('YYYY-MM-DD') || '',
-        sheet_id: storageBackend === 'sheets' ? sheetId : undefined
-      })
+      let data: { job_id: string }
+
+      // Використовуємо різні API залежно від вкладки
+      if (dataTab === 'students' || dataTab === 'teachers') {
+        // Нова логіка для студентів та викладачів
+        data = await runAnalytics({
+          campaign_type: dataTab === 'teachers' ? 'teachers' : 'students',
+          date_start: start?.format('YYYY-MM-DD') || '',
+          date_stop: end?.format('YYYY-MM-DD') || ''
+        })
+      } else {
+        // Стара логіка для реклами (креативів)
+        data = await startJob({
+          start_date: start?.format('YYYY-MM-DD') || '',
+          end_date: end?.format('YYYY-MM-DD') || '',
+          sheet_id: storageBackend === 'sheets' ? sheetId : undefined
+        })
+      }
+
       if (esRef.current) esRef.current.close()
       esRef.current = openEventStream(data.job_id, (s) => setLogs(l => [...l, s]), (p) => {
         setProgress(p.percent || 0)
@@ -167,6 +181,23 @@ export default function App() {
   async function onListNetHunt() {
     const res = await listNetHuntFolders()
     setLogs(l => [...l, 'NetHunt folders: ' + JSON.stringify(res)])
+  }
+
+  async function onClearResults() {
+    if (status !== 'done') {
+      setSnack('Немає завершених результатів для очищення')
+      return
+    }
+    // Очищуємо стан
+    setStudentsData([])
+    setTeachersData([])
+    setAdsData([])
+    setProgress(0)
+    setStatus('idle')
+    setLogs([])
+    setSnack('Результати очищено та перенесено в історію')
+    // Перезавантажуємо історію
+    loadHistory()
   }
 
   async function onDownloadExcel(dataType: 'ads' | 'students' | 'teachers' = 'ads') {
@@ -211,17 +242,34 @@ export default function App() {
           <Grid xs={12} md={4}><DatePicker label="Період до" value={end} onChange={setEnd} format="YYYY-MM-DD"/></Grid>
           <Grid xs={12}>
             <Button variant="contained" onClick={onStart}>Старт</Button>
-            <Button sx={{ ml: 1 }} onClick={onInspectHeaders}>Перевірити заголовки</Button>
-            <Button sx={{ ml: 1 }} onClick={onListNetHunt}>NetHunt папки</Button>
             <Button sx={{ ml: 1 }} variant="outlined" color="success" onClick={onDownloadExcel} disabled={status !== 'done'}>
               Завантажити Excel
+            </Button>
+            <Button sx={{ ml: 1 }} variant="outlined" color="error" onClick={onClearResults} disabled={status !== 'done'}>
+              Очистити
             </Button>
           </Grid>
           <Grid xs={12}>
             <Box sx={{ display:'flex', alignItems:'center', gap:2 }}>
-              <Box sx={{ flex: 1 }}><LinearProgress variant="determinate" value={progress} /></Box>
-              <Typography variant="body2">{progress}%</Typography>
-              <Typography variant="body2">{status}</Typography>
+              <Box sx={{ flex: 1 }}>
+                <LinearProgress
+                  variant={progress > 0 && progress < 100 ? "determinate" : "indeterminate"}
+                  value={progress}
+                  sx={{ height: 10, borderRadius: 1 }}
+                />
+              </Box>
+              <Typography variant="body2" sx={{ minWidth: 60, textAlign: 'right' }}>
+                {progress > 0 ? `${progress}%` : ''}
+              </Typography>
+              <Typography
+                variant="body2"
+                sx={{
+                  minWidth: 80,
+                  color: status === 'done' ? 'success.main' : status === 'error' ? 'error.main' : 'text.secondary'
+                }}
+              >
+                {status === 'idle' ? 'Очікування' : status === 'running' ? 'Виконується' : status === 'done' ? 'Завершено' : status}
+              </Typography>
             </Box>
           </Grid>
         </Grid>
@@ -236,42 +284,67 @@ export default function App() {
 
           <Box sx={{ mt: 2 }}>
             {dataTab === 'ads' && (
-              <TableContainer component={Paper}>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Дата початку</TableCell>
-                      <TableCell>Дата закінчення</TableCell>
-                      <TableCell>ID кампанії</TableCell>
-                      <TableCell>Назва кампанії</TableCell>
-                      <TableCell>Покази</TableCell>
-                      <TableCell>Кліки</TableCell>
-                      <TableCell>Витрати</TableCell>
-                      <TableCell>CPC</TableCell>
-                      <TableCell>CPM</TableCell>
-                      <TableCell>CTR</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {adsData.length === 0 ? (
-                      <TableRow><TableCell colSpan={10} align="center">Немає даних. Запустіть процес.</TableCell></TableRow>
-                    ) : adsData.map((row, i) => (
-                      <TableRow key={i}>
-                        <TableCell>{row.date_start}</TableCell>
-                        <TableCell>{row.date_stop}</TableCell>
-                        <TableCell>{row.campaign_id}</TableCell>
-                        <TableCell>{row.campaign_name}</TableCell>
-                        <TableCell>{row.impressions}</TableCell>
-                        <TableCell>{row.clicks}</TableCell>
-                        <TableCell>{row.spend}</TableCell>
-                        <TableCell>{row.cpc}</TableCell>
-                        <TableCell>{row.cpm}</TableCell>
-                        <TableCell>{row.ctr}</TableCell>
+              <>
+                {adsData.length === 0 && (
+                  <Alert severity="info" sx={{ mb: 2 }}>Немає даних реклами</Alert>
+                )}
+                <TableContainer component={Paper}>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Назва РК</TableCell>
+                        <TableCell>Період аналізу</TableCell>
+                        <TableCell>Дата первинного аналізу</TableCell>
+                        <TableCell>Дата вторинного аналізу</TableCell>
+                        <TableCell>Дата оновлення інформації</TableCell>
+                        <TableCell>Назва Оголошень компаній</TableCell>
+                        <TableCell>Креатив (картинка)</TableCell>
+                        <TableCell>Текст до картинки креативу</TableCell>
+                        <TableCell>CTR (%)</TableCell>
+                        <TableCell>CPL ($)</TableCell>
+                        <TableCell>CPM ($)</TableCell>
+                        <TableCell>Витрачено ($)</TableCell>
+                        <TableCell>Кількість лідів</TableCell>
+                        <TableCell>Кількість цільових лідів</TableCell>
+                        <TableCell>Кількість не цільових лідів</TableCell>
+                        <TableCell>Кількість не дозвонів</TableCell>
+                        <TableCell>Кількість в опрацюванні</TableCell>
+                        <TableCell>% цільових лідів</TableCell>
+                        <TableCell>% Не цільових лідів</TableCell>
+                        <TableCell>% Не дозвонів</TableCell>
+                        <TableCell>% В опрацюванні</TableCell>
+                        <TableCell>Ціна в $ за ліда</TableCell>
+                        <TableCell>Ціна в $ за цільового ліда</TableCell>
+                        <TableCell>Рекомендація</TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+                    </TableHead>
+                    <TableBody>
+                      {adsData.map((row, i) => (
+                        <TableRow key={i}>
+                          <TableCell>
+                            <Link
+                              href={`https://facebook.com/campaign/${row.campaign_id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              sx={{ textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+                            >
+                              {row.campaign_name || row.campaign_id || "Без назви"}
+                            </Link>
+                          </TableCell>
+                          <TableCell>{row.date_start}</TableCell>
+                          <TableCell>{row.date_stop}</TableCell>
+                          <TableCell>{row.impressions}</TableCell>
+                          <TableCell>{row.clicks}</TableCell>
+                          <TableCell>{row.spend}</TableCell>
+                          <TableCell>{row.cpc}</TableCell>
+                          <TableCell>{row.cpm}</TableCell>
+                          <TableCell>{row.ctr}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </>
             )}
 
             {dataTab === 'students' && (
@@ -286,28 +359,78 @@ export default function App() {
             )}
 
             {dataTab === 'teachers' && (
-              <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
-                <Table size="small" stickyHeader>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Назва РК</TableCell>
-                      <TableCell>Посилання</TableCell>
-                      <TableCell>Дата аналізу</TableCell>
-                      <TableCell>Бюджет $</TableCell>
-                      <TableCell>Лідів</TableCell>
-                      <TableCell>СП</TableCell>
-                      <TableCell>Стажерів</TableCell>
-                      <TableCell>% СП</TableCell>
-                      <TableCell>Ціна/лід</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {teachersData.length === 0 ? (
-                      <TableRow><TableCell colSpan={9} align="center">Немає даних. Запустіть процес.</TableCell></TableRow>
-                    ) : teachersData.map((row, i) => (
+              <>
+                {teachersData.length === 0 && (
+                  <Alert severity="info" sx={{ mb: 2 }}>Немає даних викладачів</Alert>
+                )}
+                <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
+                  <Table size="small" stickyHeader>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Назва кампанії</TableCell>
+                        <TableCell>Дата аналізу</TableCell>
+                        <TableCell>Період аналізу запущеної компанії</TableCell>
+                        <TableCell>Витрачений бюджет в $</TableCell>
+                        <TableCell>Місце знаходження (країни чи міста)</TableCell>
+                        <TableCell>Кількість лідів</TableCell>
+                        <TableCell>Кількість лідів перевірка</TableCell>
+                        <TableCell>Не розібрані ліди (в процесі опрацювання)</TableCell>
+                        <TableCell>Взяті в роботу (в процесі опрацювання)</TableCell>
+                        <TableCell>Контакт (в процесі опрацювання) ЦА</TableCell>
+                        <TableCell>НЕ дозвон (в процесі опрацювання) НЕ ЦА</TableCell>
+                        <TableCell>Співбесіда (в процесі опрацювання) ЦА</TableCell>
+                        <TableCell>СП проведено (в процесі опрацювання) ЦА</TableCell>
+                        <TableCell>Не з'явився на СП (в процесі опрацювання) ЦА</TableCell>
+                        <TableCell>Завуч затрвердив кандидата (в процесі опрацювання) ЦА</TableCell>
+                        <TableCell>Завуч не затвердив кандидата (відмовився) ЦА</TableCell>
+                        <TableCell>Переговори (в процесі опрацювання) ЦА</TableCell>
+                        <TableCell>Стажування ЦА</TableCell>
+                        <TableCell>Не має учнів ЦА</TableCell>
+                        <TableCell>Вчитель ЦА</TableCell>
+                        <TableCell>Втрачений (відмовився) ЦА</TableCell>
+                        <TableCell>Резерв стажування (в процесі опрацювання) ЦА</TableCell>
+                        <TableCell>Резерв дзвінок (в процесі опрацювання) ЦА</TableCell>
+                        <TableCell>Офбординг (відмовився) ЦА</TableCell>
+                        <TableCell>Звільнився (відмовився) ЦА</TableCell>
+                        <TableCell>Втрачений не цільовий (не цільовий) НЕ ЦА</TableCell>
+                        <TableCell>Втрачений недозвон (не цільовий) НЕ ЦА</TableCell>
+                        <TableCell>Втрачений не актуально (не цільовий) НЕ ЦА</TableCell>
+                        <TableCell>Втрачений мала зп (відмовився) ЦА</TableCell>
+                        <TableCell>Втрачений назавжди (не цільовий) НЕ ЦА</TableCell>
+                        <TableCell>Втрачений перевірити Вайбер (не цільовий) НЕ ЦА</TableCell>
+                        <TableCell>Втрачений ігнорує (відмовився) ЦА</TableCell>
+                        <TableCell>Кількість прийшов на співбесіду</TableCell>
+                        <TableCell>Кількість які не потрапили в Бот ТГ</TableCell>
+                        <TableCell>Кількість "відмовився" загалом</TableCell>
+                        <TableCell>Кількість (в процесці опрацювання) загалом</TableCell>
+                        <TableCell>Кількість на етапі "Стажування"</TableCell>
+                        <TableCell>Кількість цільових лідів</TableCell>
+                        <TableCell>Кількість не цільових лідів</TableCell>
+                        <TableCell>Конверсія відмов (%)</TableCell>
+                        <TableCell>Конверсія в опрацюванні (%)</TableCell>
+                        <TableCell>Конверсія з ліда у СП (%)</TableCell>
+                        <TableCell>Конверсія з ліда у стажера (%)</TableCell>
+                        <TableCell>Конверсія з прийшов на співбесіду в стажування</TableCell>
+                        <TableCell>% цільових лідів</TableCell>
+                        <TableCell>% не цільових лідів</TableCell>
+                        <TableCell>Ціна в $ за ліда</TableCell>
+                        <TableCell>Ціна в $ за цільового ліда</TableCell>
+                        <TableCell>Статус рекламної кампанії</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {teachersData.map((row, i) => (
                       <TableRow key={i}>
-                        <TableCell>{row['Назва РК']}</TableCell>
-                        <TableCell>{row['Посилання на рекламну компанію']}</TableCell>
+                        <TableCell>
+                          <Link
+                            href={row['Посилання на рекламну компанію']}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            sx={{ textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+                          >
+                            {row['Назва реклами'] || row['Назва РК'] || "Без назви"}
+                          </Link>
+                        </TableCell>
                         <TableCell>{row['Дата аналізу']}</TableCell>
                         <TableCell>{row['Витрачений бюджет в $']}</TableCell>
                         <TableCell>{row['Кількість лідів']}</TableCell>
@@ -320,6 +443,7 @@ export default function App() {
                   </TableBody>
                 </Table>
               </TableContainer>
+              </>
             )}
           </Box>
         </Box>

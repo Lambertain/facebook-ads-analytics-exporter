@@ -26,6 +26,17 @@ export async function startJob(params: { start_date: string; end_date: string; s
   return data as { job_id: string }
 }
 
+export async function runAnalytics(params: { campaign_type: 'teachers' | 'students'; date_start: string; date_stop: string }) {
+  const r = await fetch('/api/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  })
+  const data = await r.json()
+  if (!r.ok) throw new Error(data.error || 'Failed to start analytics')
+  return data as { job_id: string }
+}
+
 export function openEventStream(jobId: string, onLog: (s: string) => void, onProgress: (p: any) => void) {
   const es = new EventSource(`/api/events/${jobId}`)
   es.addEventListener('log', e => onLog((e as MessageEvent).data))
