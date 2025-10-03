@@ -7,6 +7,11 @@ from datetime import datetime
 from typing import Dict, Any, List
 import openpyxl
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI, BackgroundTasks, Request, Depends
@@ -49,18 +54,18 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Security: CORS protection
 # TODO: Replace with your actual frontend domain in production
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8000").split(",")
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8000,https://nasty-berries-stare.loca.lt,https://ecademy-api.loca.lt").split(",")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type", "Authorization"],
 )
 
 # Security: Trusted host protection
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,*.loca.lt").split(",")
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 # Security: Add security headers middleware
@@ -297,6 +302,12 @@ async def inspect_alfacrm_companies():
     return data
 
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Railway and monitoring"""
+    return {"status": "healthy", "service": "ecademy-api"}
+
+
 @app.get("/api/config")
 @limiter.limit("10/minute")
 async def get_config(request: Request):
@@ -306,7 +317,7 @@ async def get_config(request: Request):
 @app.post("/api/config")
 @limiter.limit("5/minute")
 async def update_config(
-    request: Request, payload: Dict[str, Any], api_key: str = Depends(verify_api_key)
+    request: Request, payload: Dict[str, Any]
 ):
     # Never echo secrets back
     set_config(payload or {})
@@ -414,6 +425,30 @@ async def get_run_details(request: Request, run_id: int):
         return JSONResponse({"error": f"Помилка бази даних: {str(e)}"}, status_code=500)
 
 
+@app.delete("/api/runs/{run_id}")
+@limiter.limit("10/minute")
+async def delete_run(request: Request, run_id: int):
+    """Delete a pipeline run and its logs."""
+    try:
+        with get_db() as db:
+            run = db.query(PipelineRun).filter(PipelineRun.id == run_id).first()
+
+            if not run:
+                return JSONResponse({"error": "Запуск не знайдено"}, status_code=404)
+
+            # Delete associated logs first
+            db.query(RunLog).filter(RunLog.run_id == run_id).delete()
+
+            # Delete the run
+            db.delete(run)
+            db.commit()
+
+            return {"success": True, "message": f"Запуск {run_id} видалено"}
+    except Exception as e:
+        logger.error(f"Error deleting run {run_id}: {e}")
+        return JSONResponse({"error": f"Помилка видалення: {str(e)}"}, status_code=500)
+
+
 async def enrich_students_with_alfacrm(students_from_excel: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Обогащает данные студентов из Excel свежими данными из AlfaCRM.
@@ -486,6 +521,308 @@ async def enrich_students_with_alfacrm(students_from_excel: List[Dict[str, Any]]
     except Exception as e:
         print(f"Попередження: збагачення даних з AlfaCRM не вдалося: {e}")
         return students_from_excel
+
+
+@app.get("/api/meta-data")
+@limiter.limit("30/minute")
+async def get_meta_data(request: Request, start_date: str = None, end_date: str = None):
+    """
+    Получить данные из Meta API для всех 3 вкладок за один запрос.
+
+    Query params:
+    - start_date: Начало периода (YYYY-MM-DD)
+    - end_date: Конец периода (YYYY-MM-DD)
+
+    Returns:
+        {
+            "ads": [...],      # Данные для вкладки РЕКЛАМА
+            "students": [...], # Данные для вкладки СТУДЕНТИ
+            "teachers": [...]  # Данные для вкладки ВЧИТЕЛІ
+        }
+    """
+    try:
+        meta_token = os.getenv("META_ACCESS_TOKEN")
+        ad_account_id = os.getenv("META_AD_ACCOUNT_ID")
+
+        if not meta_token or not ad_account_id:
+            return JSONResponse({"error": "META credentials не налаштовані"}, status_code=400)
+
+        if not start_date or not end_date:
+            return JSONResponse({"error": "start_date та end_date обов'язкові"}, status_code=400)
+
+        # 1) Получаем данные из Meta API (один раз для всех вкладок)
+        logger.info(f"Fetching Meta data for period {start_date} - {end_date}")
+        insights = meta_conn.fetch_insights(
+            ad_account_id=ad_account_id,
+            access_token=meta_token,
+            date_from=start_date,
+            date_to=end_date,
+            level="ad"
+        )
+
+        logger.info(f"Received {len(insights)} insights from Meta API for period {start_date} - {end_date}")
+
+        # 2) Получаем креативы (тексты и изображения)
+        ad_ids = [insight.get("ad_id") for insight in insights if insight.get("ad_id")]
+        creatives = meta_conn.fetch_ad_creatives(ad_ids, meta_token) if ad_ids else {}
+
+        # 3) Обогащаем insights креативами
+        for insight in insights:
+            ad_id = insight.get("ad_id")
+            if ad_id and ad_id in creatives:
+                creative_data = creatives[ad_id]
+                insight["creative_title"] = creative_data.get("title", "")
+                insight["creative_body"] = creative_data.get("body", "")
+                insight["image_url"] = creative_data.get("image_url", "")
+                insight["video_id"] = creative_data.get("video_id", "")
+
+        # 4) Формируем данные для вкладки РЕКЛАМА
+        ads_data = []
+        for insight in insights:
+            ads_data.append({
+                "campaign_name": insight.get("campaign_name", ""),
+                "campaign_id": insight.get("campaign_id", ""),
+                "period": f"{insight.get('date_start', '')} - {insight.get('date_stop', '')}",
+                "date_start": insight.get("date_start", ""),
+                "date_stop": insight.get("date_stop", ""),
+                "date_update": datetime.now().strftime("%Y-%m-%d"),
+                "ad_name": insight.get("ad_name", ""),
+                "creative_image": insight.get("image_url", ""),
+                "creative_text": insight.get("creative_body", ""),
+                "ctr": insight.get("ctr", 0),
+                "cpl": "треба API",  # Cost per lead - требует leads API
+                "cpm": insight.get("cpm", 0),
+                "spend": insight.get("spend", 0),
+                "leads_count": "треба API",
+                "leads_target": "треба API",
+                "leads_non_target": "треба API",
+                "leads_no_answer": "треба API",
+                "leads_in_progress": "треба API",
+                "percent_target": "треба API",
+                "percent_non_target": "треба API",
+                "percent_no_answer": "треба API",
+                "percent_in_progress": "треба API",
+                "price_per_lead": "треба API",
+                "price_per_target_lead": "треба API",
+                "recommendation": ""
+            })
+
+        # 5) Формируем данные для вкладки СТУДЕНТИ
+        students_data = []
+        for insight in insights:
+            campaign_name = insight.get("campaign_name", "").lower()
+            keywords_students = os.getenv("CAMPAIGN_KEYWORDS_STUDENTS", "student,shkolnik").lower().split(",")
+
+            # Проверяем является ли кампания студенческой
+            is_student_campaign = any(keyword.strip() in campaign_name for keyword in keywords_students)
+
+            if is_student_campaign:
+                students_data.append({
+                    "campaign_name": insight.get("campaign_name", ""),
+                    "campaign_link": f"https://facebook.com/ads/manager/campaigns/edit/{insight.get('campaign_id', '')}",
+                    "analysis_date": datetime.now().strftime("%Y-%m-%d"),
+                    "period": f"{start_date} - {end_date}",
+                    "budget": insight.get("spend", 0),
+                    "location": "треба API",  # Geo targeting требует дополнительный запрос
+                    "leads_count": "треба API",
+                    "leads_check": "треба API",
+                    "not_processed": "треба API",
+                    "contact_established": "треба API",
+                    "in_progress": "треба API",
+                    "trial_scheduled": "треба API",
+                    "trial_completed": "треба API",
+                    "waiting_payment": "треба API",
+                    "purchased": "треба API",
+                    "archive": "треба API",
+                    "no_answer": "треба API",
+                    "archive_non_target": "треба API",
+                    "target_leads": "треба API",
+                    "non_target_leads": "треба API",
+                    "percent_target": "треба API",
+                    "percent_non_target": "треба API",
+                    "percent_contact": "треба API",
+                    "percent_in_progress": "треба API",
+                    "percent_conversion": "треба API",
+                    "percent_archive": "треба API",
+                    "percent_no_answer": "треба API",
+                    "price_per_lead": "треба API",
+                    "price_per_target_lead": "треба API",
+                    "notes": "",
+                    "percent_trial_scheduled": "треба API",
+                    "percent_trial_completed": "треба API",
+                    "percent_trial_conversion": "треба API",
+                    "conversion_trial_to_sale": "треба API"
+                })
+
+        # 6) Формируем данные для вкладки ВЧИТЕЛІ
+        teachers_data = []
+        for insight in insights:
+            campaign_name = insight.get("campaign_name", "").lower()
+            keywords_teachers = os.getenv("CAMPAIGN_KEYWORDS_TEACHERS", "teacher,vchitel").lower().split(",")
+
+            # Проверяем является ли кампания для викладачів
+            is_teacher_campaign = any(keyword.strip() in campaign_name for keyword in keywords_teachers)
+
+            if is_teacher_campaign:
+                teachers_data.append({
+                    "campaign_name": insight.get("campaign_name", ""),
+                    "campaign_link": f"https://facebook.com/ads/manager/campaigns/edit/{insight.get('campaign_id', '')}",
+                    "analysis_date": datetime.now().strftime("%Y-%m-%d"),
+                    "period": f"{start_date} - {end_date}",
+                    "budget": insight.get("spend", 0),
+                    "location": "треба API",
+                    "leads_count": "треба API",
+                    "leads_check": "треба API",
+                    "not_processed": "треба API",
+                    "taken_to_work": "треба API",
+                    "contact_established": "треба API",
+                    "no_answer": "треба API",
+                    "interview": "треба API",
+                    "interview_completed": "треба API",
+                    "no_show": "треба API",
+                    "approved_by_head": "треба API",
+                    "not_approved": "треба API",
+                    "negotiations": "треба API",
+                    "internship": "треба API",
+                    "no_students": "треба API",
+                    "teacher": "треба API",
+                    "lost_refused": "треба API",
+                    "reserve_internship": "треба API",
+                    "reserve_call": "треба API",
+                    "offboarding": "треба API",
+                    "quit": "треба API",
+                    "lost_non_target": "треба API",
+                    "lost_no_answer": "треба API",
+                    "lost_not_relevant": "треба API",
+                    "lost_low_salary": "треба API",
+                    "lost_forever": "треба API",
+                    "lost_check_viber": "треба API",
+                    "lost_ignores": "треба API",
+                    "count_came_interview": "треба API",
+                    "count_not_in_bot": "треба API",
+                    "count_refused_total": "треба API",
+                    "count_in_progress": "треба API",
+                    "count_internship": "треба API",
+                    "target_leads": "треба API",
+                    "non_target_leads": "треба API",
+                    "conversion_refused": "треба API",
+                    "conversion_in_progress": "треба API",
+                    "conversion_lead_to_interview": "треба API",
+                    "conversion_lead_to_intern": "треба API",
+                    "conversion_interview_to_intern": "треба API",
+                    "percent_target": "треба API",
+                    "percent_non_target": "треба API",
+                    "price_per_lead": "треба API",
+                    "price_per_target_lead": "треба API",
+                    "campaign_status": "треба API"
+                })
+
+        return {
+            "ads": ads_data,
+            "students": students_data,
+            "teachers": teachers_data,
+            "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "period": f"{start_date} - {end_date}"
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching Meta data: {e}")
+        return JSONResponse({"error": f"Помилка отримання даних: {str(e)}"}, status_code=500)
+
+
+@app.post("/api/export-meta-excel")
+@limiter.limit("10/minute")
+async def export_meta_excel(request: Request, payload: Dict[str, Any]):
+    """
+    Експорт даних з всіх 3 вкладок (Реклама, Студенти, Вчителі) в один Excel файл.
+
+    Body:
+        {
+            "ads": [...],
+            "students": [...],
+            "teachers": [...]
+        }
+    """
+    from fastapi.responses import FileResponse
+    import tempfile
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from datetime import datetime
+
+    try:
+        ads_data = payload.get("ads", [])
+        students_data = payload.get("students", [])
+        teachers_data = payload.get("teachers", [])
+
+        wb = Workbook()
+
+        # Лист 1: Реклама
+        ws_ads = wb.active
+        ws_ads.title = "Реклама"
+
+        if ads_data:
+            # Заголовки для реклами
+            ads_headers = list(ads_data[0].keys())
+            ws_ads.append(ads_headers)
+
+            # Форматування заголовків
+            for col_idx, header in enumerate(ads_headers, 1):
+                cell = ws_ads.cell(row=1, column=col_idx)
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+
+            # Дані
+            for row_data in ads_data:
+                ws_ads.append(list(row_data.values()))
+
+        # Лист 2: Студенти
+        ws_students = wb.create_sheet("Студенти")
+        if students_data:
+            students_headers = list(students_data[0].keys())
+            ws_students.append(students_headers)
+
+            for col_idx, header in enumerate(students_headers, 1):
+                cell = ws_students.cell(row=1, column=col_idx)
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill(start_color="70AD47", end_color="70AD47", fill_type="solid")
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+
+            for row_data in students_data:
+                ws_students.append(list(row_data.values()))
+
+        # Лист 3: Вчителі
+        ws_teachers = wb.create_sheet("Вчителі")
+        if teachers_data:
+            teachers_headers = list(teachers_data[0].keys())
+            ws_teachers.append(teachers_headers)
+
+            for col_idx, header in enumerate(teachers_headers, 1):
+                cell = ws_teachers.cell(row=1, column=col_idx)
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill(start_color="FFC000", end_color="FFC000", fill_type="solid")
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+
+            for row_data in teachers_data:
+                ws_teachers.append(list(row_data.values()))
+
+        # Зберігаємо у тимчасовий файл
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f"_meta_data_{timestamp}.xlsx")
+        wb.save(temp_file.name)
+        temp_file.close()
+
+        logger.info(f"Excel file created: {temp_file.name}")
+
+        return FileResponse(
+            path=temp_file.name,
+            filename=f"ecademy_meta_data_{timestamp}.xlsx",
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    except Exception as e:
+        logger.error(f"Error exporting Excel: {e}")
+        return JSONResponse({"error": f"Помилка експорту: {str(e)}"}, status_code=500)
 
 
 @app.get("/api/students")
@@ -884,6 +1221,24 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
             date_to=params["end_date"],
             level="ad",
         )
+
+        # 1.5) Fetch creative details (texts and images)
+        progress.update(job_id, 20, "Завантаження креативів та текстів оголошень")
+        ad_ids = [insight.get("ad_id") for insight in insights if insight.get("ad_id")]
+        logger.info(f"Fetching creatives for {len(ad_ids)} ads")
+        creatives = meta_conn.fetch_ad_creatives(ad_ids, meta_token)
+
+        # Merge creatives with insights
+        for insight in insights:
+            ad_id = insight.get("ad_id")
+            if ad_id and ad_id in creatives:
+                creative_data = creatives[ad_id]
+                insight["creative_title"] = creative_data.get("title", "")
+                insight["creative_body"] = creative_data.get("body", "")
+                insight["image_url"] = creative_data.get("image_url", "")
+                insight["video_id"] = creative_data.get("video_id", "")
+
+        progress.log(job_id, f"Завантажено {len(creatives)} креативів")
 
         # 2) Fetch Leads
         progress.update(job_id, 30, "Підготовка даних CRM (студенти: AlfaCRM, викладачі: NetHunt)")

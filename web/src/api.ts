@@ -1,13 +1,15 @@
+const API_BASE = ''
+
 export type ConfigMap = Record<string, { value: string; has_value: boolean; secret: boolean }>
 
 export async function getConfig(): Promise<ConfigMap> {
-  const r = await fetch('/api/config')
+  const r = await fetch(`${API_BASE}/api/config`)
   if (!r.ok) throw new Error('Failed to load config')
   return r.json()
 }
 
 export async function updateConfig(values: Record<string, string>): Promise<void> {
-  const r = await fetch('/api/config', {
+  const r = await fetch(`${API_BASE}/api/config`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(values)
@@ -16,7 +18,7 @@ export async function updateConfig(values: Record<string, string>): Promise<void
 }
 
 export async function startJob(params: { start_date: string; end_date: string; sheet_id?: string }) {
-  const r = await fetch('/api/start-job', {
+  const r = await fetch(`${API_BASE}/api/start-job`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params)
@@ -27,7 +29,7 @@ export async function startJob(params: { start_date: string; end_date: string; s
 }
 
 export async function runAnalytics(params: { campaign_type: 'teachers' | 'students'; date_start: string; date_stop: string }) {
-  const r = await fetch('/api/run', {
+  const r = await fetch(`${API_BASE}/api/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params)
@@ -38,7 +40,7 @@ export async function runAnalytics(params: { campaign_type: 'teachers' | 'studen
 }
 
 export function openEventStream(jobId: string, onLog: (s: string) => void, onProgress: (p: any) => void) {
-  const es = new EventSource(`/api/events/${jobId}`)
+  const es = new EventSource(`${API_BASE}/api/events/${jobId}`)
   es.addEventListener('log', e => onLog((e as MessageEvent).data))
   es.addEventListener('progress', e => {
     try {
@@ -51,17 +53,17 @@ export function openEventStream(jobId: string, onLog: (s: string) => void, onPro
 }
 
 export async function inspectExcelHeaders() {
-  const r = await fetch('/api/inspect/excel-headers')
+  const r = await fetch(`${API_BASE}/api/inspect/excel-headers`)
   return r.json()
 }
 
 export async function listNetHuntFolders() {
-  const r = await fetch('/api/inspect/nethunt/folders')
+  const r = await fetch(`${API_BASE}/api/inspect/nethunt/folders`)
   return r.json()
 }
 
 export async function listAlfaCompanies() {
-  const r = await fetch('/api/inspect/alfacrm/companies')
+  const r = await fetch(`${API_BASE}/api/inspect/alfacrm/companies`)
   return r.json()
 }
 
@@ -117,9 +119,158 @@ export async function getStudents(params?: {
   if (params?.end_date) queryParams.append('end_date', params.end_date)
   if (params?.enrich !== undefined) queryParams.append('enrich', String(params.enrich))
 
-  const url = `/api/students${queryParams.toString() ? '?' + queryParams.toString() : ''}`
+  const url = `${API_BASE}/api/students${queryParams.toString() ? '?' + queryParams.toString() : ''}`
   const r = await fetch(url)
   if (!r.ok) throw new Error('Failed to load students data')
   return r.json()
+}
+
+// Meta Data types (matching backend /api/meta-data response)
+export interface MetaAd {
+  campaign_name: string
+  campaign_id: string
+  ad_name: string
+  creative_image: string
+  creative_text: string
+  ctr: number
+  cpm: number
+  spend: number
+  leads_count: string
+  leads_target: string
+  contacted: string
+  in_progress: string
+  trial_scheduled: string
+  trial_completed: string
+  awaiting_payment: string
+  purchased: string
+  archived: string
+  not_reached: string
+  archived_non_target: string
+  target_leads_count: string
+  non_target_leads_count: string
+  target_leads_percent: string
+  non_target_leads_percent: string
+  contact_percent: string
+  in_progress_percent: string
+}
+
+export interface MetaStudent {
+  campaign_name: string
+  campaign_link: string
+  analysis_date: string
+  period: string
+  budget: number
+  location: string
+  leads_count: string
+  leads_check: string
+  not_processed: string
+  contacted: string
+  in_progress: string
+  trial_scheduled: string
+  trial_completed: string
+  awaiting_payment: string
+  purchased: string
+  archived: string
+  not_reached: string
+  archived_non_target: string
+  target_leads: string
+  non_target_leads: string
+  target_percent: string
+  non_target_percent: string
+  contact_percent: string
+  in_progress_percent: string
+  conversion_percent: string
+  archive_percent: string
+  not_reached_percent: string
+  cost_per_lead: string
+  cost_per_target_lead: string
+  notes: string
+  trial_scheduled_percent: string
+  trial_completed_from_total_percent: string
+  trial_completed_from_scheduled_percent: string
+  trial_to_purchase_percent: string
+}
+
+export interface MetaTeacher {
+  campaign_name: string
+  campaign_link: string
+  analysis_date: string
+  period: string
+  budget: number
+  location: string
+  leads_count: string
+  leads_check: string
+  not_processed: string
+  contacted: string
+  in_progress: string
+  trial_scheduled: string
+  trial_completed: string
+  awaiting_payment: string
+  purchased: string
+  archived: string
+  not_reached: string
+  archived_non_target: string
+  target_leads: string
+  non_target_leads: string
+  target_percent: string
+  non_target_percent: string
+  contact_percent: string
+  in_progress_percent: string
+  conversion_percent: string
+  archive_percent: string
+  not_reached_percent: string
+  cost_per_lead: string
+  cost_per_target_lead: string
+  notes: string
+  trial_scheduled_percent: string
+  trial_completed_from_total_percent: string
+  trial_completed_from_scheduled_percent: string
+  trial_to_purchase_percent: string
+}
+
+export interface MetaDataResponse {
+  ads: MetaAd[]
+  students: MetaStudent[]
+  teachers: MetaTeacher[]
+  fetched_at: string
+  period: string
+}
+
+export async function getMetaData(params: {
+  start_date: string
+  end_date: string
+}): Promise<MetaDataResponse> {
+  const queryParams = new URLSearchParams({
+    start_date: params.start_date,
+    end_date: params.end_date
+  })
+
+  const url = `${API_BASE}/api/meta-data?${queryParams.toString()}`
+  const r = await fetch(url)
+  if (!r.ok) throw new Error('Failed to load Meta data')
+  return r.json()
+}
+
+export async function exportMetaExcel(data: {
+  ads: MetaAd[]
+  students: MetaStudent[]
+  teachers: MetaTeacher[]
+}): Promise<void> {
+  const r = await fetch(`${API_BASE}/api/export-meta-excel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  })
+  if (!r.ok) throw new Error('Failed to export Excel')
+
+  const blob = await r.blob()
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `ecademy_meta_data_${new Date().toISOString().slice(0, 10)}.xlsx`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  window.URL.revokeObjectURL(url)
 }
 

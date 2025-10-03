@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React from 'react'
 import {
   Table,
   TableBody,
@@ -7,47 +7,16 @@ import {
   TableHead,
   TableRow,
   Paper,
-  CircularProgress,
   Alert,
-  Box,
   Link
 } from '@mui/material'
-import { getStudents, Student } from './api'
+import { MetaStudent } from './api'
 
-export default function StudentsTable() {
-  const [students, setStudents] = useState<Student[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+interface StudentsTableProps {
+  students: MetaStudent[]
+}
 
-  useEffect(() => {
-    loadStudents()
-  }, [])
-
-  async function loadStudents() {
-    try {
-      setLoading(true)
-      setError(null)
-      const data = await getStudents({ enrich: true })
-      setStudents(data.students)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Помилка завантаження даних')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" p={4}>
-        <CircularProgress />
-      </Box>
-    )
-  }
-
-  if (error) {
-    return <Alert severity="error">{error}</Alert>
-  }
-
+export default function StudentsTable({ students }: StudentsTableProps) {
   return (
     <>
       {students.length === 0 && (
@@ -58,90 +27,90 @@ export default function StudentsTable() {
           <TableHead>
             <TableRow>
               <TableCell>Назва кампанії</TableCell>
-              <TableCell>Дата аналізу</TableCell>
-              <TableCell>Період аналізу запущеної компанії</TableCell>
-              <TableCell>Витрачений бюджет в $</TableCell>
-              <TableCell>Місце знаходження (країни чи міста)</TableCell>
-              <TableCell>Кількість лідів</TableCell>
-              <TableCell>Перевірка лідів автоматичний</TableCell>
-              <TableCell>Не розібрані</TableCell>
-              <TableCell>Встанов. контакт (ЦА)</TableCell>
-              <TableCell>В опрацюванні (ЦА)</TableCell>
-              <TableCell>Назначений пробний (ЦА)</TableCell>
-              <TableCell>Проведений пробний (ЦА)</TableCell>
-              <TableCell>Чекаємо оплату</TableCell>
-              <TableCell>Купили (ЦА)</TableCell>
-              <TableCell>Архів (ЦА)</TableCell>
-              <TableCell>Недозвон (не ЦА)</TableCell>
-              <TableCell>Архів (не ЦА)</TableCell>
-              <TableCell>Кількість цільових лідів</TableCell>
-              <TableCell>Кількість не цільових лідів</TableCell>
-              <TableCell>% цільових лідів</TableCell>
-              <TableCell>% не цільових лідів</TableCell>
-              <TableCell>% Встан. контакт</TableCell>
-              <TableCell>% В опрацюванні (ЦА)</TableCell>
-              <TableCell>% конверсія</TableCell>
-              <TableCell>% архів</TableCell>
-              <TableCell>% недозвон</TableCell>
-              <TableCell>Ціна / ліда</TableCell>
-              <TableCell>Ціна / цільового ліда</TableCell>
-              <TableCell>Нотатки</TableCell>
-              <TableCell>% Назначений пробний</TableCell>
-              <TableCell>% Проведений пробний від загальних лідів (ЦА)</TableCell>
-              <TableCell>% Проведений пробний від назначених пробних</TableCell>
-              <TableCell>Конверсія з проведеного пробного в продаж</TableCell>
+            <TableCell>Дата аналізу</TableCell>
+            <TableCell>Період аналізу запущеної компанії</TableCell>
+            <TableCell>Витрачений бюджет в $</TableCell>
+            <TableCell>Місце знаходження (країни чи міста)</TableCell>
+            <TableCell>Кількість лідів</TableCell>
+            <TableCell>Перевірка лідів автоматичний</TableCell>
+            <TableCell>Не розібрані</TableCell>
+            <TableCell>Встанов. контакт (ЦА)</TableCell>
+            <TableCell>В опрацюванні (ЦА)</TableCell>
+            <TableCell>Назначений пробний (ЦА)</TableCell>
+            <TableCell>Проведений пробний (ЦА)</TableCell>
+            <TableCell>Чекаємо оплату</TableCell>
+            <TableCell>Купили (ЦА)</TableCell>
+            <TableCell>Архів (ЦА)</TableCell>
+            <TableCell>Недозвон (не ЦА)</TableCell>
+            <TableCell>Архів (не ЦА)</TableCell>
+            <TableCell>Кількість цільових лідів</TableCell>
+            <TableCell>Кількість не цільових лідів</TableCell>
+            <TableCell>% цільових лідів</TableCell>
+            <TableCell>% не цільових лідів</TableCell>
+            <TableCell>% Встан. контакт</TableCell>
+            <TableCell>% В опрацюванні (ЦА)</TableCell>
+            <TableCell>% конверсія</TableCell>
+            <TableCell>% архів</TableCell>
+            <TableCell>% недозвон</TableCell>
+            <TableCell>Ціна / ліда</TableCell>
+            <TableCell>Ціна / цільового ліда</TableCell>
+            <TableCell>Нотатки</TableCell>
+            <TableCell>% Назначений пробний</TableCell>
+            <TableCell>% Проведений пробний від загальних лідів (ЦА)</TableCell>
+            <TableCell>% Проведений пробний від назначених пробних</TableCell>
+            <TableCell>Конверсія з проведеного пробного в продаж</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {students.map((s, idx) => (
+            <TableRow key={idx} hover>
+              <TableCell>
+                <Link
+                  href={s.campaign_link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  sx={{ textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+                >
+                  {s.campaign_name || "Без назви"}
+                </Link>
+              </TableCell>
+              <TableCell>{s.analysis_date}</TableCell>
+              <TableCell>{s.period}</TableCell>
+              <TableCell>{s.budget}</TableCell>
+              <TableCell>{s.location}</TableCell>
+              <TableCell>{s.leads_count}</TableCell>
+              <TableCell>{s.leads_check}</TableCell>
+              <TableCell>{s.not_processed}</TableCell>
+              <TableCell>{s.contacted}</TableCell>
+              <TableCell>{s.in_progress}</TableCell>
+              <TableCell>{s.trial_scheduled}</TableCell>
+              <TableCell>{s.trial_completed}</TableCell>
+              <TableCell>{s.awaiting_payment}</TableCell>
+              <TableCell>{s.purchased}</TableCell>
+              <TableCell>{s.archived}</TableCell>
+              <TableCell>{s.not_reached}</TableCell>
+              <TableCell>{s.archived_non_target}</TableCell>
+              <TableCell>{s.target_leads}</TableCell>
+              <TableCell>{s.non_target_leads}</TableCell>
+              <TableCell>{s.target_percent}</TableCell>
+              <TableCell>{s.non_target_percent}</TableCell>
+              <TableCell>{s.contact_percent}</TableCell>
+              <TableCell>{s.in_progress_percent}</TableCell>
+              <TableCell>{s.conversion_percent}</TableCell>
+              <TableCell>{s.archive_percent}</TableCell>
+              <TableCell>{s.not_reached_percent}</TableCell>
+              <TableCell>{s.cost_per_lead}</TableCell>
+              <TableCell>{s.cost_per_target_lead}</TableCell>
+              <TableCell>{s.notes}</TableCell>
+              <TableCell>{s.trial_scheduled_percent}</TableCell>
+              <TableCell>{s.trial_completed_from_total_percent}</TableCell>
+              <TableCell>{s.trial_completed_from_scheduled_percent}</TableCell>
+              <TableCell>{s.trial_to_purchase_percent}</TableCell>
             </TableRow>
-          </TableHead>
-          <TableBody>
-            {students.map((s, idx) => (
-              <TableRow key={idx} hover>
-                <TableCell>
-                  <Link
-                    href={s["Посилання на рекламну компанію"]}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    sx={{ textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
-                  >
-                    {s["Назва реклами"] || "Без назви"}
-                  </Link>
-                </TableCell>
-                <TableCell>{s["Дата аналізу"]}</TableCell>
-                <TableCell>{s["Період аналізу запущеної компанії"]}</TableCell>
-                <TableCell>{s["Витрачений бюджет в $"]}</TableCell>
-                <TableCell>{s["Місце знаходження (країни чи міста)"]}</TableCell>
-                <TableCell>{s["Кількість лідів"]}</TableCell>
-                <TableCell>{s["Перевірка лідів автоматичний"]}</TableCell>
-                <TableCell>{s["Не розібрані"]}</TableCell>
-                <TableCell>{s["Встанов. контакт (ЦА)"]}</TableCell>
-                <TableCell>{s["В опрацюванні (ЦА)"]}</TableCell>
-                <TableCell>{s["Назначений пробний (ЦА)"]}</TableCell>
-                <TableCell>{s["Проведений пробний (ЦА)"]}</TableCell>
-                <TableCell>{s["Чекаємо оплату"]}</TableCell>
-                <TableCell>{s["Купили (ЦА)"]}</TableCell>
-                <TableCell>{s["Архів (ЦА)"]}</TableCell>
-                <TableCell>{s["Недозвон (не ЦА)"]}</TableCell>
-                <TableCell>{s["Архів (не ЦА)"]}</TableCell>
-                <TableCell>{s["Кількість цільових лідів"]}</TableCell>
-                <TableCell>{s["Кількість не цільових лідів"]}</TableCell>
-                <TableCell>{s["% цільових лідів"]}</TableCell>
-                <TableCell>{s["% не цільових лідів"]}</TableCell>
-                <TableCell>{s["% Встан. контакт"]}</TableCell>
-                <TableCell>{s["% В опрацюванні (ЦА)"]}</TableCell>
-                <TableCell>{s["% конверсія"]}</TableCell>
-                <TableCell>{s["% архів"]}</TableCell>
-                <TableCell>{s["% недозвон"]}</TableCell>
-                <TableCell>{s["Ціна / ліда"]}</TableCell>
-                <TableCell>{s["Ціна / цільового ліда"]}</TableCell>
-                <TableCell>{s["Нотатки"]}</TableCell>
-                <TableCell>{s["% Назначений пробний"]}</TableCell>
-                <TableCell>{s["% Проведений пробний від загальних лідів (ЦА)"]}</TableCell>
-                <TableCell>{s["% Проведений пробний від назначених пробних"]}</TableCell>
-                <TableCell>{s["Конверсія з проведеного пробного в продаж"]}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
     </>
   )
 }

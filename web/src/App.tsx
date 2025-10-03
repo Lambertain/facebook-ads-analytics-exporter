@@ -2,17 +2,17 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert, AppBar, Box, Button, Container, Dialog, DialogActions, DialogContent, DialogTitle,
   Grid2 as Grid, IconButton, LinearProgress, Snackbar, Tab, Tabs, TextField, Tooltip, Typography, InputAdornment,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Link
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Link, Checkbox
 } from '@mui/material'
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline'
 import FolderOpenIcon from '@mui/icons-material/FolderOpen'
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
 import { DatePicker, LocalizationProvider } from '@mui/x-date-pickers'
 import dayjs, { Dayjs } from 'dayjs'
-import { ConfigMap, getConfig, inspectExcelHeaders, listAlfaCompanies, listNetHuntFolders, openEventStream, startJob, runAnalytics, updateConfig } from './api'
+import { ConfigMap, getConfig, inspectExcelHeaders, listAlfaCompanies, listNetHuntFolders, openEventStream, startJob, runAnalytics, updateConfig, getMetaData, exportMetaExcel } from './api'
 import StudentsTable from './StudentsTable'
 
-type TabKey = 'run' | 'settings' | 'history'
+type TabKey = 'instructions' | 'run' | 'settings' | 'history'
 type DataTabKey = 'students' | 'teachers' | 'ads'
 
 interface PipelineRun {
@@ -57,7 +57,7 @@ function Help({ title, children }: { title: string, children: JSX.Element }) {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<TabKey>('run')
+  const [tab, setTab] = useState<TabKey>('instructions')
   const [dataTab, setDataTab] = useState<DataTabKey>('ads')
   const [cfg, setCfg] = useState<ConfigMap | null>(null)
   const [saving, setSaving] = useState(false)
@@ -80,6 +80,7 @@ export default function App() {
   const [runs, setRuns] = useState<PipelineRun[]>([])
   const [selectedRun, setSelectedRun] = useState<{ run: PipelineRun; logs: RunLog[] } | null>(null)
   const [historyFilter, setHistoryFilter] = useState<string>('')
+  const [selectedRunIds, setSelectedRunIds] = useState<Set<number>>(new Set())
 
   useEffect(() => { (async () => {
     try {
@@ -89,12 +90,12 @@ export default function App() {
     } catch (e) { setSnack('Не вдалося завантажити конфігурацію') }
   })() }, [])
 
-  // Load history when history tab is opened
+  // Load history when history tab is opened or filter changes
   useEffect(() => {
     if (tab === 'history') {
       loadHistory()
     }
-  }, [tab])
+  }, [tab, historyFilter])
 
   async function loadHistory() {
     try {
@@ -113,6 +114,57 @@ export default function App() {
       setSelectedRun(data)
     } catch (e) {
       setSnack('Не вдалося завантажити деталі запуску')
+    }
+  }
+
+  function toggleRunSelection(runId: number) {
+    setSelectedRunIds(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(runId)) {
+        newSet.delete(runId)
+      } else {
+        newSet.add(runId)
+      }
+      return newSet
+    })
+  }
+
+  function toggleAllRuns() {
+    if (selectedRunIds.size === runs.length) {
+      setSelectedRunIds(new Set())
+    } else {
+      setSelectedRunIds(new Set(runs.map(r => r.id)))
+    }
+  }
+
+  async function deleteSelectedRuns() {
+    if (selectedRunIds.size === 0) {
+      setSnack('Виберіть записи для видалення')
+      return
+    }
+
+    if (!confirm(`Видалити ${selectedRunIds.size} записів?`)) {
+      return
+    }
+
+    try {
+      const deletePromises = Array.from(selectedRunIds).map(async id => {
+        const response = await fetch(`/api/runs/${id}`, { method: 'DELETE' })
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}))
+          throw new Error(errorData.error || `Помилка видалення запису ${id}`)
+        }
+        return response.json()
+      })
+
+      await Promise.all(deletePromises)
+      setSnack(`Видалено ${selectedRunIds.size} записів`)
+      setSelectedRunIds(new Set())
+      setSelectedRun(null)
+      await loadHistory()
+    } catch (e: any) {
+      console.error('Delete error:', e)
+      setSnack('Помилка видалення записів: ' + (e?.message || ''))
     }
   }
 
@@ -144,33 +196,37 @@ export default function App() {
     setProgress(5)
     setStatus('running')
     try {
-      let data: { job_id: string }
+      // Використовуємо новий єдиний endpoint /api/meta-data для всіх 3 вкладок
+      const startDate = start?.format('YYYY-MM-DD') || ''
+      const endDate = end?.format('YYYY-MM-DD') || ''
 
-      // Використовуємо різні API залежно від вкладки
-      if (dataTab === 'students' || dataTab === 'teachers') {
-        // Нова логіка для студентів та викладачів
-        data = await runAnalytics({
-          campaign_type: dataTab === 'teachers' ? 'teachers' : 'students',
-          date_start: start?.format('YYYY-MM-DD') || '',
-          date_stop: end?.format('YYYY-MM-DD') || ''
-        })
-      } else {
-        // Стара логіка для реклами (креативів)
-        data = await startJob({
-          start_date: start?.format('YYYY-MM-DD') || '',
-          end_date: end?.format('YYYY-MM-DD') || '',
-          sheet_id: storageBackend === 'sheets' ? sheetId : undefined
-        })
-      }
+      setLogs(l => [...l, `Завантаження даних з Meta API за період ${startDate} - ${endDate}...`])
+      setProgress(20)
 
-      if (esRef.current) esRef.current.close()
-      esRef.current = openEventStream(data.job_id, (s) => setLogs(l => [...l, s]), (p) => {
-        setProgress(p.percent || 0)
-        setStatus(p.status || 'running')
+      const metaData = await getMetaData({
+        start_date: startDate,
+        end_date: endDate
       })
+
+      setProgress(60)
+      setLogs(l => [...l, `Отримано рекламних кампаній: ${metaData.ads.length}`])
+      setLogs(l => [...l, `Отримано студентських кампаній: ${metaData.students.length}`])
+      setLogs(l => [...l, `Отримано викладацьких кампаній: ${metaData.teachers.length}`])
+
+      // Оновлюємо всі 3 вкладки одночасно
+      setAdsData(metaData.ads)
+      setStudentsData(metaData.students)
+      setTeachersData(metaData.teachers)
+
+      setProgress(100)
+      setStatus('done')
+      setLogs(l => [...l, `Завантаження завершено: ${metaData.fetched_at}`])
+      setSnack('Дані успішно завантажено з Meta API')
+
     } catch (e: any) {
       setSnack('Не вдалося запустити завдання: ' + (e?.message || ''))
       setStatus('error')
+      setLogs(l => [...l, `Помилка: ${e?.message || ''}`])
     }
   }
 
@@ -200,36 +256,53 @@ export default function App() {
     loadHistory()
   }
 
-  async function onDownloadExcel(dataType: 'ads' | 'students' | 'teachers' = 'ads') {
-    if (status !== 'done' && dataType === 'ads') {
+  async function onDownloadExcel() {
+    if (status !== 'done') {
       setSnack('Спочатку запустіть процес і дочекайтесь завершення')
       return
     }
+    if (adsData.length === 0 && studentsData.length === 0 && teachersData.length === 0) {
+      setSnack('Немає даних для експорту')
+      return
+    }
     try {
-      const response = await fetch('/api/download-excel', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          data_type: dataType,
-          start_date: start?.format('YYYY-MM-DD'),
-          end_date: end?.format('YYYY-MM-DD')
-        })
+      await exportMetaExcel({
+        ads: adsData,
+        students: studentsData,
+        teachers: teachersData
       })
-      if (!response.ok) throw new Error('Помилка завантаження')
-
-      const blob = await response.blob()
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      const filename = `${dataType}_export_${start?.format('YYYY-MM-DD')}_${end?.format('YYYY-MM-DD')}.xlsx`
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
       setSnack('Excel файл завантажено')
     } catch (e: any) {
       setSnack('Помилка завантаження: ' + (e?.message || ''))
+    }
+  }
+
+  async function onDownloadHistoryExcel(run: PipelineRun) {
+    try {
+      if (!run.start_date || !run.end_date) {
+        setSnack('Помилка: відсутні дати в записі історії')
+        return
+      }
+
+      const metaData = await getMetaData({
+        start_date: run.start_date,
+        end_date: run.end_date
+      })
+
+      if (!metaData.ads && !metaData.students && !metaData.teachers) {
+        setSnack('Немає даних для експорту за цей період')
+        return
+      }
+
+      await exportMetaExcel({
+        ads: metaData.ads || [],
+        students: metaData.students || [],
+        teachers: metaData.teachers || []
+      })
+      setSnack('Excel файл завантажено')
+    } catch (e: any) {
+      console.error('Excel export error:', e)
+      setSnack('Помилка завантаження: ' + (e?.message || e?.toString() || 'Невідома помилка'))
     }
   }
 
@@ -237,15 +310,31 @@ export default function App() {
     <LocalizationProvider dateAdapter={AdapterDayjs}>
       <Box sx={{ mt: 2 }}>
         {/* Керування та прогрес */}
-        <Grid container spacing={2}>
-          <Grid xs={12} md={4}><DatePicker label="Період з" value={start} onChange={setStart} format="YYYY-MM-DD"/></Grid>
-          <Grid xs={12} md={4}><DatePicker label="Період до" value={end} onChange={setEnd} format="YYYY-MM-DD"/></Grid>
+        <Grid container spacing={2} alignItems="center">
+          <Grid xs={12} md={4}>
+            <DatePicker
+              label="Період з"
+              value={start}
+              onChange={setStart}
+              format="YYYY-MM-DD"
+              slotProps={{ textField: { size: 'medium' } }}
+            />
+          </Grid>
+          <Grid xs={12} md={4}>
+            <DatePicker
+              label="Період до"
+              value={end}
+              onChange={setEnd}
+              format="YYYY-MM-DD"
+              slotProps={{ textField: { size: 'medium' } }}
+            />
+          </Grid>
           <Grid xs={12}>
-            <Button variant="contained" onClick={onStart}>Старт</Button>
-            <Button sx={{ ml: 1 }} variant="outlined" color="success" onClick={onDownloadExcel} disabled={status !== 'done'}>
+            <Button variant="contained" onClick={onStart} size="medium">Старт</Button>
+            <Button sx={{ ml: 1 }} variant="outlined" color="success" onClick={onDownloadExcel} disabled={status !== 'done'} size="medium">
               Завантажити Excel
             </Button>
-            <Button sx={{ ml: 1 }} variant="outlined" color="error" onClick={onClearResults} disabled={status !== 'done'}>
+            <Button sx={{ ml: 1 }} variant="outlined" color="error" onClick={onClearResults} disabled={status !== 'done'} size="medium">
               Очистити
             </Button>
           </Grid>
@@ -288,8 +377,8 @@ export default function App() {
                 {adsData.length === 0 && (
                   <Alert severity="info" sx={{ mb: 2 }}>Немає даних реклами</Alert>
                 )}
-                <TableContainer component={Paper}>
-                  <Table size="small">
+                <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
+                  <Table size="small" stickyHeader>
                     <TableHead>
                       <TableRow>
                         <TableCell>Назва РК</TableCell>
@@ -331,14 +420,33 @@ export default function App() {
                               {row.campaign_name || row.campaign_id || "Без назви"}
                             </Link>
                           </TableCell>
-                          <TableCell>{row.date_start}</TableCell>
-                          <TableCell>{row.date_stop}</TableCell>
-                          <TableCell>{row.impressions}</TableCell>
-                          <TableCell>{row.clicks}</TableCell>
-                          <TableCell>{row.spend}</TableCell>
-                          <TableCell>{row.cpc}</TableCell>
-                          <TableCell>{row.cpm}</TableCell>
-                          <TableCell>{row.ctr}</TableCell>
+                          <TableCell>-</TableCell>
+                          <TableCell>-</TableCell>
+                          <TableCell>-</TableCell>
+                          <TableCell>-</TableCell>
+                          <TableCell>{row.ad_name || '-'}</TableCell>
+                          <TableCell>
+                            {row.creative_image ? (
+                              <img src={row.creative_image} alt="Creative" style={{ maxWidth: '100px', maxHeight: '60px' }} />
+                            ) : '-'}
+                          </TableCell>
+                          <TableCell>{row.creative_text || '-'}</TableCell>
+                          <TableCell>{row.ctr || 0}</TableCell>
+                          <TableCell>-</TableCell>
+                          <TableCell>{row.cpm || 0}</TableCell>
+                          <TableCell>{row.spend || 0}</TableCell>
+                          <TableCell>{row.leads_count}</TableCell>
+                          <TableCell>{row.target_leads_count}</TableCell>
+                          <TableCell>{row.non_target_leads_count}</TableCell>
+                          <TableCell>{row.not_reached}</TableCell>
+                          <TableCell>{row.in_progress}</TableCell>
+                          <TableCell>{row.target_leads_percent}</TableCell>
+                          <TableCell>{row.non_target_leads_percent}</TableCell>
+                          <TableCell>-</TableCell>
+                          <TableCell>{row.in_progress_percent}</TableCell>
+                          <TableCell>-</TableCell>
+                          <TableCell>-</TableCell>
+                          <TableCell>-</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -348,14 +456,7 @@ export default function App() {
             )}
 
             {dataTab === 'students' && (
-              <>
-                <Box sx={{ mb: 2, display: 'flex', justifyContent: 'flex-end' }}>
-                  <Button variant="outlined" color="success" onClick={() => onDownloadExcel('students')}>
-                    Завантажити Students Excel
-                  </Button>
-                </Box>
-                <StudentsTable />
-              </>
+              <StudentsTable students={studentsData} />
             )}
 
             {dataTab === 'teachers' && (
@@ -423,21 +524,58 @@ export default function App() {
                       <TableRow key={i}>
                         <TableCell>
                           <Link
-                            href={row['Посилання на рекламну компанію']}
+                            href={row.campaign_link}
                             target="_blank"
                             rel="noopener noreferrer"
                             sx={{ textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
                           >
-                            {row['Назва реклами'] || row['Назва РК'] || "Без назви"}
+                            {row.campaign_name || "Без назви"}
                           </Link>
                         </TableCell>
-                        <TableCell>{row['Дата аналізу']}</TableCell>
-                        <TableCell>{row['Витрачений бюджет в $']}</TableCell>
-                        <TableCell>{row['Кількість лідів']}</TableCell>
-                        <TableCell>{row['Кількість СП']}</TableCell>
-                        <TableCell>{row['Кількість найнятих стажерів']}</TableCell>
-                        <TableCell>{row['Відсоток СП']}</TableCell>
-                        <TableCell>{row['Ціна в $ за ліда']}</TableCell>
+                        <TableCell>{row.analysis_date}</TableCell>
+                        <TableCell>{row.period}</TableCell>
+                        <TableCell>{row.budget}</TableCell>
+                        <TableCell>{row.location}</TableCell>
+                        <TableCell>{row.leads_count}</TableCell>
+                        <TableCell>{row.leads_check}</TableCell>
+                        <TableCell>{row.not_processed}</TableCell>
+                        <TableCell>{row.contacted}</TableCell>
+                        <TableCell>{row.contacted}</TableCell>
+                        <TableCell>{row.not_reached}</TableCell>
+                        <TableCell>{row.trial_scheduled}</TableCell>
+                        <TableCell>{row.trial_completed}</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>{row.target_leads}</TableCell>
+                        <TableCell>{row.non_target_leads}</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>{row.in_progress_percent}</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>{row.target_percent}</TableCell>
+                        <TableCell>{row.non_target_percent}</TableCell>
+                        <TableCell>{row.cost_per_lead}</TableCell>
+                        <TableCell>{row.cost_per_target_lead}</TableCell>
+                        <TableCell>-</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -464,6 +602,15 @@ export default function App() {
         <Button variant="outlined" size="small" onClick={() => setHistoryFilter('success')}>Успішні</Button>
         <Button variant="outlined" size="small" onClick={() => setHistoryFilter('error')}>Помилки</Button>
         <Button variant="outlined" size="small" onClick={loadHistory}>Оновити</Button>
+        <Button
+          variant="outlined"
+          size="small"
+          color="error"
+          onClick={deleteSelectedRuns}
+          disabled={selectedRunIds.size === 0}
+        >
+          Видалити вибрані ({selectedRunIds.size})
+        </Button>
       </Box>
 
       <Grid container spacing={2}>
@@ -473,6 +620,13 @@ export default function App() {
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
+                  <TableCell padding="checkbox">
+                    <Checkbox
+                      checked={runs.length > 0 && selectedRunIds.size === runs.length}
+                      indeterminate={selectedRunIds.size > 0 && selectedRunIds.size < runs.length}
+                      onChange={toggleAllRuns}
+                    />
+                  </TableCell>
                   <TableCell>ID</TableCell>
                   <TableCell>Період</TableCell>
                   <TableCell>Статус</TableCell>
@@ -482,17 +636,23 @@ export default function App() {
               </TableHead>
               <TableBody>
                 {runs.length === 0 ? (
-                  <TableRow><TableCell colSpan={5} align="center">Немає історії запусків</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={6} align="center">Немає історії запусків</TableCell></TableRow>
                 ) : runs.map((run) => (
                   <TableRow
                     key={run.id}
                     hover
-                    onClick={() => loadRunDetails(run.id)}
-                    sx={{ cursor: 'pointer', bgcolor: selectedRun?.run.id === run.id ? '#f0f0f0' : 'inherit' }}
+                    selected={selectedRun?.run.id === run.id}
+                    sx={{ cursor: 'pointer' }}
                   >
-                    <TableCell>{run.id}</TableCell>
-                    <TableCell>{run.start_date} - {run.end_date}</TableCell>
-                    <TableCell>
+                    <TableCell padding="checkbox" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedRunIds.has(run.id)}
+                        onChange={() => toggleRunSelection(run.id)}
+                      />
+                    </TableCell>
+                    <TableCell onClick={() => loadRunDetails(run.id)}>{run.id}</TableCell>
+                    <TableCell onClick={() => loadRunDetails(run.id)}>{run.start_date} - {run.end_date}</TableCell>
+                    <TableCell onClick={() => loadRunDetails(run.id)}>
                       <Box sx={{
                         display: 'inline-block',
                         px: 1,
@@ -505,10 +665,10 @@ export default function App() {
                         {run.status}
                       </Box>
                     </TableCell>
-                    <TableCell sx={{ fontSize: '0.75rem' }}>
+                    <TableCell onClick={() => loadRunDetails(run.id)} sx={{ fontSize: '0.75rem' }}>
                       {run.start_time ? new Date(run.start_time).toLocaleString('uk-UA') : '-'}
                     </TableCell>
-                    <TableCell>
+                    <TableCell onClick={() => loadRunDetails(run.id)}>
                       {run.insights_count + run.students_count + run.teachers_count}
                     </TableCell>
                   </TableRow>
@@ -523,7 +683,17 @@ export default function App() {
           {selectedRun ? (
             <Box>
               <Paper sx={{ p: 2, mb: 2 }}>
-                <Typography variant="h6" gutterBottom>Деталі запуску #{selectedRun.run.id}</Typography>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                  <Typography variant="h6">Деталі запуску #{selectedRun.run.id}</Typography>
+                  <Button
+                    variant="outlined"
+                    color="success"
+                    size="medium"
+                    onClick={() => onDownloadHistoryExcel(selectedRun.run)}
+                  >
+                    Завантажити Excel
+                  </Button>
+                </Box>
                 <Grid container spacing={1}>
                   <Grid size={6}><Typography variant="body2"><strong>Job ID:</strong> {selectedRun.run.job_id}</Typography></Grid>
                   <Grid size={6}><Typography variant="body2"><strong>Статус:</strong> {selectedRun.run.status}</Typography></Grid>
@@ -563,6 +733,84 @@ export default function App() {
           )}
         </Grid>
       </Grid>
+    </Box>
+  )
+
+  const instructionsTab = (
+    <Box sx={{ mt: 2 }}>
+      <Typography variant="h4" sx={{ mb: 3 }}>Як користуватись системою eCademy Analytics</Typography>
+
+      <Typography variant="h6" sx={{ mt: 3, mb: 2 }}>1. Налаштування</Typography>
+      <Typography paragraph>
+        Перейдіть у вкладку <strong>Налаштування</strong> та заповніть необхідні дані:
+      </Typography>
+      <Box component="ul" sx={{ pl: 3 }}>
+        <li><strong>META_ACCESS_TOKEN</strong> - токен доступу до Facebook Meta API (отримайте в Meta for Developers)</li>
+        <li><strong>META_AD_ACCOUNT_ID</strong> - ID рекламного акаунту (формат: act_XXXXX)</li>
+        <li><strong>NETHUNT_BASIC_AUTH</strong> - токен Basic авторизації для NetHunt CRM (викладачі)</li>
+        <li><strong>NETHUNT_FOLDER_ID</strong> - ID папки NetHunt для викладачів</li>
+        <li><strong>ALFACRM_BASE_URL, ALFACRM_EMAIL, ALFACRM_API_KEY, ALFACRM_COMPANY_ID</strong> - дані AlfaCRM (студенти)</li>
+        <li><strong>Ключові слова</strong> - слова для фільтрації кампаній викладачів та студентів</li>
+      </Box>
+
+      <Typography variant="h6" sx={{ mt: 3, mb: 2 }}>2. Збір даних з Meta Ads</Typography>
+      <Typography paragraph>
+        У вкладці <strong>Запуск</strong>:
+      </Typography>
+      <Box component="ol" sx={{ pl: 3 }}>
+        <li>Виберіть період дат (Період з → Період до)</li>
+        <li>Натисніть кнопку <strong>Старт</strong></li>
+        <li>Система автоматично завантажить дані з Meta API за вибраний період</li>
+        <li>Дочекайтесь завершення процесу (прогрес-бар покаже 100%)</li>
+      </Box>
+
+      <Typography variant="h6" sx={{ mt: 3, mb: 2 }}>3. Перегляд результатів</Typography>
+      <Typography paragraph>
+        Після завершення збору даних ви побачите 3 вкладки з результатами:
+      </Typography>
+      <Box component="ul" sx={{ pl: 3 }}>
+        <li><strong>РЕКЛАМА</strong> - детальна інформація по рекламних оголошеннях (CTR, CPM, витрати, креативи)</li>
+        <li><strong>СТУДЕНТИ</strong> - статистика кампаній для студентів з аналізом лідів та конверсій</li>
+        <li><strong>ВЧИТЕЛІ</strong> - статистика кампаній для викладачів з аналізом лідів та конверсій</li>
+      </Box>
+      <Typography paragraph>
+        Всі таблиці мають вертикальний скрол для зручного перегляду великої кількості даних.
+      </Typography>
+
+      <Typography variant="h6" sx={{ mt: 3, mb: 2 }}>4. Експорт даних в Excel</Typography>
+      <Typography paragraph>
+        Після завершення збору даних натисніть кнопку <strong>Завантажити Excel</strong> поряд з кнопкою Старт.
+      </Typography>
+      <Typography paragraph>
+        Ви отримаєте Excel файл з 3 листами:
+      </Typography>
+      <Box component="ul" sx={{ pl: 3 }}>
+        <li><strong>Реклама</strong> (сині заголовки) - всі дані по оголошеннях</li>
+        <li><strong>Студенти</strong> (зелені заголовки) - всі дані по студентським кампаніям</li>
+        <li><strong>Вчителі</strong> (помаранчеві заголовки) - всі дані по викладацьким кампаніям</li>
+      </Box>
+
+      <Typography variant="h6" sx={{ mt: 3, mb: 2 }}>5. Історія запусків</Typography>
+      <Typography paragraph>
+        У вкладці <strong>Історія</strong> ви можете переглянути всі попередні запуски системи та їх результати.
+      </Typography>
+
+      <Typography variant="h6" sx={{ mt: 3, mb: 2 }}>Майбутні можливості (при повних правах API)</Typography>
+      <Typography paragraph>
+        При наявності розширених прав Meta API токена стане доступним:
+      </Typography>
+      <Box component="ul" sx={{ pl: 3 }}>
+        <li>Автоматичне завантаження номерів телефонів лідів з груп оголошень</li>
+        <li>Інтеграція з NetHunt CRM для автоматичного збагачення даних викладачів</li>
+        <li>Інтеграція з AlfaCRM для автоматичного збагачення даних студентів</li>
+        <li>Детальна аналітика по статусам лідів у воронці продажів</li>
+        <li>Автоматичний розрахунок конверсій та вартості цільового ліда</li>
+      </Box>
+
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 4, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
+        <strong>Примітка:</strong> На даний момент система працює з обмеженими правами Meta API токена.
+        Для повної функціональності необхідно отримати токен з правами ads_read, leads_retrieval та доступом до сторінок/акаунту.
+      </Typography>
     </Box>
   )
 
@@ -621,6 +869,26 @@ export default function App() {
         </>
       )}
 
+      <Typography variant="h6" sx={{ mt: 3, mb: 2 }}>Ключові слова для фільтрації кампаній</Typography>
+      <TextField
+        fullWidth
+        label="Ключові слова для викладачів (через кому)"
+        value={cfg.CAMPAIGN_KEYWORDS_TEACHERS?.value || ''}
+        onChange={e=>updateField('CAMPAIGN_KEYWORDS_TEACHERS', e.target.value)}
+        placeholder="Teacher,Vchitel"
+        helperText="Введіть слова через кому. Кампанії з цими словами в назві будуть вважатись викладацькими."
+        sx={{ mb: 2 }}
+      />
+      <TextField
+        fullWidth
+        label="Ключові слова для студентів (через кому)"
+        value={cfg.CAMPAIGN_KEYWORDS_STUDENTS?.value || ''}
+        onChange={e=>updateField('CAMPAIGN_KEYWORDS_STUDENTS', e.target.value)}
+        placeholder="Student,Shkolnik"
+        helperText="Введіть слова через кому. Кампанії з цими словами в назві будуть вважатись студентськими."
+        sx={{ mb: 3 }}
+      />
+
       <Button disabled={saving} variant="contained" onClick={onSave} sx={{ mt: 2 }}>Зберегти</Button>
     </Box>
   )
@@ -633,6 +901,7 @@ export default function App() {
             eCademy analytics
           </Typography>
           <Tabs value={tab} onChange={(_,v)=>setTab(v)} textColor="inherit" indicatorColor="secondary">
+            <Tab label="Як користуватись" value="instructions" />
             <Tab label="Запуск" value="run" />
             <Tab label="Історія" value="history" />
             <Tab label="Налаштування" value="settings" />
@@ -640,7 +909,7 @@ export default function App() {
         </Box>
       </AppBar>
       <Container maxWidth="lg" sx={{ mt: 2, mb: 4 }}>
-        {tab === 'run' ? runTab : tab === 'history' ? historyTab : settingsTab}
+        {tab === 'instructions' ? instructionsTab : tab === 'run' ? runTab : tab === 'history' ? historyTab : settingsTab}
       </Container>
       <Snackbar open={!!snack} onClose={()=>setSnack(null)} message={snack||''} autoHideDuration={3000} />
     </Box>
