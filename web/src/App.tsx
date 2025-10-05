@@ -323,9 +323,11 @@ export default function App() {
         return
       }
 
-      // Перезавантажуємо дані з Meta API за той самий період
-      setSnack('Завантаження даних з Meta API...')
+      // Показуємо прогрес
+      const loadingSnack = 'Отримання даних з Meta API...'
+      setSnack(loadingSnack)
 
+      // Перезавантажуємо дані з Meta API за той самий період
       const metaData = await getMetaData({
         start_date: run.start_date,
         end_date: run.end_date
@@ -340,14 +342,18 @@ export default function App() {
         return
       }
 
-      // Експортуємо в Excel - це завантажить файл
+      // Показуємо що генеруємо файл
+      setSnack('Генерація Excel файлу...')
+
+      // Експортуємо в Excel - це завантажить файл автоматично
       await exportMetaExcel({
         ads: metaData.ads || [],
         students: metaData.students || [],
         teachers: metaData.teachers || []
       })
 
-      // Не показуємо snackbar - браузер покаже діалог завантаження
+      // Успішно - закриваємо snackbar
+      setSnack(null)
     } catch (e: any) {
       console.error('Excel export error:', e)
       setSnack('Помилка завантаження: ' + (e?.message || e?.toString() || 'Невідома помилка'))
