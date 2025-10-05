@@ -426,11 +426,11 @@ export default function App() {
                           <TableCell>-</TableCell>
                           <TableCell>{row.ad_name || '-'}</TableCell>
                           <TableCell>
-                            {row.creative_image ? (
-                              <img src={row.creative_image} alt="Creative" style={{ maxWidth: '100px', maxHeight: '60px' }} />
+                            {row.creative_image || row.image_url ? (
+                              <img src={row.creative_image || row.image_url} alt="Creative" style={{ maxWidth: '100px', maxHeight: '60px', objectFit: 'contain' }} />
                             ) : '-'}
                           </TableCell>
-                          <TableCell>{row.creative_text || '-'}</TableCell>
+                          <TableCell>{row.creative_text || row.creative_body || '-'}</TableCell>
                           <TableCell>{row.ctr || 0}</TableCell>
                           <TableCell>-</TableCell>
                           <TableCell>{row.cpm || 0}</TableCell>
