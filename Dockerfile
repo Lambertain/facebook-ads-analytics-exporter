@@ -34,8 +34,8 @@ COPY --from=frontend-builder /app/web/dist ./web/dist
 # Create directory for database
 RUN mkdir -p /app/data
 
-# Expose port (Railway will override with )
+# Expose port (Railway will override with $PORT)
 EXPOSE 8000
 
-# Start command
-CMD uvicorn app.main:app --host 0.0.0.0 --port 8000
+# Start command - Railway provides PORT env var
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
