@@ -115,94 +115,98 @@ class TestFetchInsights:
         assert result == []
 
 
-class TestFetchLeads:
-    """Тести для функції fetch_leads."""
+# ТЕСТЫ ОТКЛЮЧЕНЫ: fetch_leads() закомментирована в meta.py
+# Причина: текущий Meta токен не имеет прав leads_retrieval
+# Раскомментировать когда функция будет активирована
 
-    @patch('app.connectors.meta._get_all')
-    @patch('app.connectors.meta.requests.get')
-    def test_fetch_leads_success(self, mock_get, mock_get_all, mock_meta_token,
-                                  date_range, mock_pages_response, mock_forms_response,
-                                  mock_meta_leads_response):
-        """Тест успішного отримання лідів."""
-        # Arrange
-        mock_get_all.side_effect = [
-            mock_pages_response["data"],  # pages
-            mock_forms_response["data"]   # forms
-        ]
-
-        mock_response = Mock()
-        mock_response.json.return_value = mock_meta_leads_response
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
-
-        # Act
-        result = meta.fetch_leads(
-            access_token=mock_meta_token,
-            date_from=date_range["date_from"],
-            date_to=date_range["date_to"]
-        )
-
-        # Assert
-        assert len(result) == 1
-        assert result[0]["id"] == "lead_123"
-        assert result[0]["page_id"] == "page_123"
-        assert result[0]["form_id"] == "form_123"
-        assert "field_data" in result[0]
-
-    @patch('app.connectors.meta._get_all')
-    def test_fetch_leads_no_pages(self, mock_get_all, mock_meta_token, date_range):
-        """Тест коли немає доступних сторінок."""
-        # Arrange
-        mock_get_all.return_value = []
-
-        # Act
-        result = meta.fetch_leads(
-            access_token=mock_meta_token,
-            date_from=date_range["date_from"],
-            date_to=date_range["date_to"]
-        )
-
-        # Assert
-        assert result == []
-
-    @patch('app.connectors.meta._get_all')
-    @patch('app.connectors.meta.requests.get')
-    def test_fetch_leads_with_pagination(self, mock_get, mock_get_all, mock_meta_token,
-                                         date_range, mock_pages_response, mock_forms_response):
-        """Тест отримання лідів з пагінацією."""
-        # Arrange
-        mock_get_all.side_effect = [
-            mock_pages_response["data"],
-            mock_forms_response["data"]
-        ]
-
-        first_response = Mock()
-        first_response.json.return_value = {
-            "data": [{"id": "lead_1", "created_time": "2025-01-01T10:00:00+0000", "field_data": []}],
-            "paging": {"next": "https://graph.facebook.com/v19.0/next_page"}
-        }
-        first_response.raise_for_status = Mock()
-
-        second_response = Mock()
-        second_response.json.return_value = {
-            "data": [{"id": "lead_2", "created_time": "2025-01-02T10:00:00+0000", "field_data": []}],
-            "paging": {}
-        }
-        second_response.raise_for_status = Mock()
-
-        mock_get.side_effect = [first_response, second_response]
-
-        # Act
-        result = meta.fetch_leads(
-            access_token=mock_meta_token,
-            date_from=date_range["date_from"],
-            date_to=date_range["date_to"]
-        )
-
-        # Assert
-        assert len(result) == 2
-        assert result[0]["id"] == "lead_1"
-        assert result[1]["id"] == "lead_2"
+# class TestFetchLeads:
+#     """Тести для функції fetch_leads."""
+#
+#     @patch('app.connectors.meta._get_all')
+#     @patch('app.connectors.meta.requests.get')
+#     def test_fetch_leads_success(self, mock_get, mock_get_all, mock_meta_token,
+#                                   date_range, mock_pages_response, mock_forms_response,
+#                                   mock_meta_leads_response):
+#         """Тест успішного отримання лідів."""
+#         # Arrange
+#         mock_get_all.side_effect = [
+#             mock_pages_response["data"],  # pages
+#             mock_forms_response["data"]   # forms
+#         ]
+#
+#         mock_response = Mock()
+#         mock_response.json.return_value = mock_meta_leads_response
+#         mock_response.raise_for_status = Mock()
+#         mock_get.return_value = mock_response
+#
+#         # Act
+#         result = meta.fetch_leads(
+#             access_token=mock_meta_token,
+#             date_from=date_range["date_from"],
+#             date_to=date_range["date_to"]
+#         )
+#
+#         # Assert
+#         assert len(result) == 1
+#         assert result[0]["id"] == "lead_123"
+#         assert result[0]["page_id"] == "page_123"
+#         assert result[0]["form_id"] == "form_123"
+#         assert "field_data" in result[0]
+#
+#     @patch('app.connectors.meta._get_all')
+#     def test_fetch_leads_no_pages(self, mock_get_all, mock_meta_token, date_range):
+#         """Тест коли немає доступних сторінок."""
+#         # Arrange
+#         mock_get_all.return_value = []
+#
+#         # Act
+#         result = meta.fetch_leads(
+#             access_token=mock_meta_token,
+#             date_from=date_range["date_from"],
+#             date_to=date_range["date_to"]
+#         )
+#
+#         # Assert
+#         assert result == []
+#
+#     @patch('app.connectors.meta._get_all')
+#     @patch('app.connectors.meta.requests.get')
+#     def test_fetch_leads_with_pagination(self, mock_get, mock_get_all, mock_meta_token,
+#                                          date_range, mock_pages_response, mock_forms_response):
+#         """Тест отримання лідів з пагінацією."""
+#         # Arrange
+#         mock_get_all.side_effect = [
+#             mock_pages_response["data"],
+#             mock_forms_response["data"]
+#         ]
+#
+#         first_response = Mock()
+#         first_response.json.return_value = {
+#             "data": [{"id": "lead_1", "created_time": "2025-01-01T10:00:00+0000", "field_data": []}],
+#             "paging": {"next": "https://graph.facebook.com/v19.0/next_page"}
+#         }
+#         first_response.raise_for_status = Mock()
+#
+#         second_response = Mock()
+#         second_response.json.return_value = {
+#             "data": [{"id": "lead_2", "created_time": "2025-01-02T10:00:00+0000", "field_data": []}],
+#             "paging": {}
+#         }
+#         second_response.raise_for_status = Mock()
+#
+#         mock_get.side_effect = [first_response, second_response]
+#
+#         # Act
+#         result = meta.fetch_leads(
+#             access_token=mock_meta_token,
+#             date_from=date_range["date_from"],
+#             date_to=date_range["date_to"]
+#         )
+#
+#         # Assert
+#         assert len(result) == 2
+#         assert result[0]["id"] == "lead_1"
+#         assert result[1]["id"] == "lead_2"
 
 
 class TestGetAll:

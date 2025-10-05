@@ -54,7 +54,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Security: CORS protection
 # TODO: Replace with your actual frontend domain in production
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8000,https://nasty-berries-stare.loca.lt,https://ecademy-api.loca.lt").split(",")
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8000,https://nasty-berries-stare.loca.lt,https://ecademy-api.loca.lt,https://*.railway.app").split(",")
 
 app.add_middleware(
     CORSMiddleware,
@@ -65,7 +65,7 @@ app.add_middleware(
 )
 
 # Security: Trusted host protection
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,*.loca.lt").split(",")
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,*.loca.lt,*.railway.app").split(",")
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 # Security: Add security headers middleware
