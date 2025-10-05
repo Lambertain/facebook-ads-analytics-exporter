@@ -81,7 +81,13 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+    # Allow images from Facebook CDN for creative images
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https://*.fbcdn.net https://graph.facebook.com"
+    )
     return response
 
 progress = ProgressStore()
@@ -311,6 +317,29 @@ async def inspect_alfacrm_companies():
 async def health_check():
     """Health check endpoint for Railway and monitoring"""
     return {"status": "healthy", "service": "ecademy-api"}
+
+
+@app.get("/api/proxy-image")
+async def proxy_image(url: str):
+    """
+    Proxy endpoint для загрузки изображений креативов.
+    Обходит CORS ограничения Meta API.
+    """
+    import httpx
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=10.0)
+            if response.status_code == 200:
+                return StreamingResponse(
+                    iter([response.content]),
+                    media_type=response.headers.get("content-type", "image/jpeg")
+                )
+            else:
+                return JSONResponse({"error": f"Failed to fetch image: {response.status_code}"}, status_code=response.status_code)
+    except Exception as e:
+        logger.error(f"Error proxying image: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.get("/api/config")
