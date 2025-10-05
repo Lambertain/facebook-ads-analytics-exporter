@@ -138,17 +138,23 @@ export default function App() {
   }
 
   async function deleteSelectedRuns() {
+    console.log('Delete button clicked, selected IDs:', Array.from(selectedRunIds))
+
     if (selectedRunIds.size === 0) {
       setSnack('Виберіть записи для видалення')
       return
     }
 
-    if (!confirm(`Видалити ${selectedRunIds.size} записів?`)) {
+    if (!window.confirm(`Видалити ${selectedRunIds.size} записів?`)) {
+      console.log('User cancelled deletion')
       return
     }
 
     try {
+      setSnack('Видалення записів...')
+
       const deletePromises = Array.from(selectedRunIds).map(async id => {
+        console.log(`Deleting run ${id}...`)
         const response = await fetch(`/api/runs/${id}`, { method: 'DELETE' })
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}))
@@ -158,6 +164,8 @@ export default function App() {
       })
 
       await Promise.all(deletePromises)
+      console.log('All runs deleted successfully')
+
       setSnack(`Видалено ${selectedRunIds.size} записів`)
       setSelectedRunIds(new Set())
       setSelectedRun(null)
@@ -308,26 +316,37 @@ export default function App() {
 
   async function onDownloadHistoryExcel(run: PipelineRun) {
     try {
+      console.log('Downloading Excel for run:', run)
+
       if (!run.start_date || !run.end_date) {
         setSnack('Помилка: відсутні дати в записі історії')
         return
       }
+
+      setSnack('Завантаження даних з Meta API...')
 
       const metaData = await getMetaData({
         start_date: run.start_date,
         end_date: run.end_date
       })
 
-      if (!metaData.ads && !metaData.students && !metaData.teachers) {
+      console.log('Meta data received:', metaData)
+
+      if ((!metaData.ads || metaData.ads.length === 0) &&
+          (!metaData.students || metaData.students.length === 0) &&
+          (!metaData.teachers || metaData.teachers.length === 0)) {
         setSnack('Немає даних для експорту за цей період')
         return
       }
+
+      setSnack('Створення Excel файлу...')
 
       await exportMetaExcel({
         ads: metaData.ads || [],
         students: metaData.students || [],
         teachers: metaData.teachers || []
       })
+
       setSnack('Excel файл завантажено')
     } catch (e: any) {
       console.error('Excel export error:', e)
