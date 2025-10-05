@@ -31,9 +31,9 @@ COPY config/ ./config/
 # Copy built frontend from stage 1
 COPY --from=frontend-builder /app/web/dist ./web/dist
 
-# Copy entrypoint script
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# Copy Python entrypoint script
+COPY start.py /app/start.py
+RUN chmod +x /app/start.py
 
 # Create directory for database
 RUN mkdir -p /app/data
@@ -41,5 +41,5 @@ RUN mkdir -p /app/data
 # Expose port (Railway will override with $PORT)
 EXPOSE 8000
 
-# Use entrypoint script to handle PORT env var
-ENTRYPOINT ["/app/entrypoint.sh"]
+# Use Python script to properly read PORT env var
+CMD ["python", "/app/start.py"]
