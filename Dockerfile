@@ -1,33 +1,41 @@
-# Backend Dockerfile for eCademy FastAPI app
+# Multi-stage build for eCademy
+# Stage 1: Build frontend
+FROM node:18-alpine AS frontend-builder
+
+WORKDIR /app/web
+
+# Copy package files and install dependencies
+COPY web/package*.json ./
+RUN npm ci
+
+# Copy frontend source and build
+COPY web/ ./
+RUN npm run build
+
+# Stage 2: Python backend
 FROM python:3.11-slim
 
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y     gcc     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN groupadd -r appuser && useradd -r -g appuser appuser
-
-# Copy requirements and install Python dependencies
+# Copy Python requirements and install
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code with correct ownership
-COPY --chown=appuser:appuser app/ ./app/
-COPY --chown=appuser:appuser config/ ./config/
-COPY --chown=appuser:appuser scripts/ ./scripts/
-COPY --chown=appuser:appuser static/ ./static/
-COPY --chown=appuser:appuser web/dist/ ./web/dist/
+# Copy backend code
+COPY app/ ./app/
+COPY config/ ./config/
 
-# Switch to non-root user
-USER appuser
+# Copy built frontend from stage 1
+COPY --from=frontend-builder /app/web/dist ./web/dist
 
-# Expose port for FastAPI
+# Create directory for database
+RUN mkdir -p /app/data
+
+# Expose port (Railway will override with )
 EXPOSE 8000
 
-# Run uvicorn server (production mode, multiple workers)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Start command
+CMD uvicorn app.main:app --host 0.0.0.0 --port 8000
