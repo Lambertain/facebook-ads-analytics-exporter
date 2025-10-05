@@ -176,7 +176,7 @@ def fetch_insights(ad_account_id: str, access_token: str, date_from: str, date_t
 #     return results
 
 
-def fetch_ad_creatives(ad_ids: List[str], access_token: str) -> Dict[str, Dict[str, Any]]:
+def fetch_ad_creatives(ad_ids: List[str], access_token: str, ad_account_id: str = None) -> Dict[str, Dict[str, Any]]:
     """Fetch creative details (text, images, videos) for given ad IDs.
 
     Returns a dict mapping ad_id to creative data.
@@ -197,12 +197,21 @@ def fetch_ad_creatives(ad_ids: List[str], access_token: str) -> Dict[str, Dict[s
             story_spec = creative_data.get("object_story_spec", {})
             link_data = story_spec.get("link_data", {}) or story_spec.get("video_data", {})
 
+            # Construct image URL from hash if image_url not available
+            image_url = creative_data.get("image_url", "")
+            image_hash = creative_data.get("image_hash", "")
+
+            # If no image_url but we have image_hash and ad_account_id, construct URL
+            if not image_url and image_hash and ad_account_id:
+                image_url = f"https://graph.facebook.com/v18.0/{ad_account_id}/adimages?hashes=[%22{image_hash}%22]&access_token={access_token}"
+                logger.info(f"Constructed image URL from hash for ad {ad_id}: {image_url[:100]}...")
+
             creatives[ad_id] = {
                 "name": creative_data.get("name", ""),
                 "title": creative_data.get("title") or link_data.get("name", ""),
                 "body": creative_data.get("body") or link_data.get("message", ""),
-                "image_hash": creative_data.get("image_hash", ""),
-                "image_url": creative_data.get("image_url", ""),
+                "image_hash": image_hash,
+                "image_url": image_url,
                 "video_id": creative_data.get("video_id", ""),
                 "thumbnail_url": creative_data.get("thumbnail_url", ""),
             }

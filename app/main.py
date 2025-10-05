@@ -618,7 +618,7 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
 
         # 2) Получаем креативы (тексты и изображения)
         ad_ids = [insight.get("ad_id") for insight in insights if insight.get("ad_id")]
-        creatives = meta_conn.fetch_ad_creatives(ad_ids, meta_token) if ad_ids else {}
+        creatives = meta_conn.fetch_ad_creatives(ad_ids, meta_token, ad_account_id) if ad_ids else {}
 
         # 3) Обогащаем insights креативами
         for insight in insights:
@@ -645,8 +645,10 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
                 "date_stop": insight.get("date_stop", ""),
                 "date_update": datetime.now().strftime("%Y-%m-%d"),
                 "ad_name": insight.get("ad_name", ""),
-                "creative_image": insight.get("image_url", ""),
+                "creative_image": insight.get("image_url") or insight.get("thumbnail_url", ""),
                 "creative_text": insight.get("creative_body", ""),
+                "image_url": insight.get("image_url", ""),
+                "thumbnail_url": insight.get("thumbnail_url", ""),
                 "ctr": insight.get("ctr", 0),
                 "cpl": "треба API",  # Cost per lead - требует leads API
                 "cpm": insight.get("cpm", 0),
