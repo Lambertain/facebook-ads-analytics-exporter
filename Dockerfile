@@ -37,5 +37,6 @@ RUN mkdir -p /app/data
 # Expose port
 EXPOSE 8000
 
-# Start uvicorn directly - Railway proxies all ports automatically
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Use shell form to allow PORT variable expansion
+# Railway will set PORT, defaults to 8000 locally
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
