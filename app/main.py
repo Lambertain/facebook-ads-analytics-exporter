@@ -528,6 +528,55 @@ async def enrich_students_with_alfacrm(students_from_excel: List[Dict[str, Any]]
         return students_from_excel
 
 
+@app.post("/api/save-run-history")
+@limiter.limit("30/minute")
+async def save_run_history(request: Request, payload: Dict[str, Any]):
+    """
+    Зберігає історію запуску в базу даних.
+
+    Args:
+        start_date: YYYY-MM-DD
+        end_date: YYYY-MM-DD
+        insights_count: кількість insights
+        students_count: кількість студентів
+        teachers_count: кількість викладачів
+        status: success/error
+        error_message: опціонально
+    """
+    try:
+        with get_db() as db:
+            db_run = PipelineRun(
+                job_id=str(uuid.uuid4()),
+                start_time=datetime.utcnow(),
+                end_time=datetime.utcnow(),
+                start_date=payload.get("start_date"),
+                end_date=payload.get("end_date"),
+                storage_backend="meta_api",
+                status=payload.get("status", "success"),
+                insights_count=payload.get("insights_count", 0),
+                students_count=payload.get("students_count", 0),
+                teachers_count=payload.get("teachers_count", 0),
+                error_message=payload.get("error_message")
+            )
+            db.add(db_run)
+            db.commit()
+            db.refresh(db_run)
+
+            # Зберігаємо лог
+            log_entry = RunLog(
+                run_id=db_run.id,
+                message=f"Meta API data fetched: {payload.get('insights_count', 0)} ads, {payload.get('students_count', 0)} students, {payload.get('teachers_count', 0)} teachers",
+                level="info"
+            )
+            db.add(log_entry)
+            db.commit()
+
+            return {"success": True, "run_id": db_run.id}
+    except Exception as e:
+        logger.error(f"Error saving run history: {e}")
+        return JSONResponse({"error": f"Помилка збереження історії: {str(e)}"}, status_code=500)
+
+
 @app.get("/api/meta-data")
 @limiter.limit("30/minute")
 async def get_meta_data(request: Request, start_date: str = None, end_date: str = None):
@@ -580,6 +629,10 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
                 insight["creative_body"] = creative_data.get("body", "")
                 insight["image_url"] = creative_data.get("image_url", "")
                 insight["video_id"] = creative_data.get("video_id", "")
+
+                # Debug logging для першого креативу
+                if len(insights) > 0 and insight == insights[0]:
+                    logger.info(f"DEBUG first creative: ad_id={ad_id}, image_url={creative_data.get('image_url')}, thumbnail={creative_data.get('thumbnail_url')}")
 
         # 4) Формируем данные для вкладки РЕКЛАМА
         ads_data = []

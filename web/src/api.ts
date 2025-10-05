@@ -251,6 +251,24 @@ export async function getMetaData(params: {
   return r.json()
 }
 
+export async function saveRunHistory(params: {
+  start_date: string
+  end_date: string
+  insights_count: number
+  students_count: number
+  teachers_count: number
+  status: 'success' | 'error'
+  error_message?: string
+}): Promise<{ success: boolean; run_id: number }> {
+  const r = await fetch(`${API_BASE}/api/save-run-history`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  })
+  if (!r.ok) throw new Error('Failed to save run history')
+  return r.json()
+}
+
 export async function exportMetaExcel(data: {
   ads: MetaAd[]
   students: MetaStudent[]

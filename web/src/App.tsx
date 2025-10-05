@@ -9,7 +9,7 @@ import FolderOpenIcon from '@mui/icons-material/FolderOpen'
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
 import { DatePicker, LocalizationProvider } from '@mui/x-date-pickers'
 import dayjs, { Dayjs } from 'dayjs'
-import { ConfigMap, getConfig, inspectExcelHeaders, listAlfaCompanies, listNetHuntFolders, openEventStream, startJob, runAnalytics, updateConfig, getMetaData, exportMetaExcel } from './api'
+import { ConfigMap, getConfig, inspectExcelHeaders, listAlfaCompanies, listNetHuntFolders, openEventStream, startJob, runAnalytics, updateConfig, getMetaData, exportMetaExcel, saveRunHistory } from './api'
 import StudentsTable from './StudentsTable'
 
 type TabKey = 'instructions' | 'run' | 'settings' | 'history'
@@ -223,10 +223,39 @@ export default function App() {
       setLogs(l => [...l, `Завантаження завершено: ${metaData.fetched_at}`])
       setSnack('Дані успішно завантажено з Meta API')
 
+      // Зберігаємо в історію
+      try {
+        await saveRunHistory({
+          start_date: startDate,
+          end_date: endDate,
+          insights_count: metaData.ads.length,
+          students_count: metaData.students.length,
+          teachers_count: metaData.teachers.length,
+          status: 'success'
+        })
+      } catch (e) {
+        console.error('Failed to save history:', e)
+      }
+
     } catch (e: any) {
       setSnack('Не вдалося запустити завдання: ' + (e?.message || ''))
       setStatus('error')
       setLogs(l => [...l, `Помилка: ${e?.message || ''}`])
+
+      // Зберігаємо помилку в історію
+      try {
+        await saveRunHistory({
+          start_date: start?.format('YYYY-MM-DD') || '',
+          end_date: end?.format('YYYY-MM-DD') || '',
+          insights_count: 0,
+          students_count: 0,
+          teachers_count: 0,
+          status: 'error',
+          error_message: e?.message || 'Unknown error'
+        })
+      } catch (err) {
+        console.error('Failed to save error history:', err)
+      }
     }
   }
 
