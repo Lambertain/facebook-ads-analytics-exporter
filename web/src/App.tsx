@@ -323,6 +323,7 @@ export default function App() {
         return
       }
 
+      // Перезавантажуємо дані з Meta API за той самий період
       setSnack('Завантаження даних з Meta API...')
 
       const metaData = await getMetaData({
@@ -339,15 +340,14 @@ export default function App() {
         return
       }
 
-      setSnack('Створення Excel файлу...')
-
+      // Експортуємо в Excel - це завантажить файл
       await exportMetaExcel({
         ads: metaData.ads || [],
         students: metaData.students || [],
         teachers: metaData.teachers || []
       })
 
-      setSnack('Excel файл завантажено')
+      // Не показуємо snackbar - браузер покаже діалог завантаження
     } catch (e: any) {
       console.error('Excel export error:', e)
       setSnack('Помилка завантаження: ' + (e?.message || e?.toString() || 'Невідома помилка'))
@@ -684,11 +684,12 @@ export default function App() {
                   <TableCell>Статус</TableCell>
                   <TableCell>Час</TableCell>
                   <TableCell>Записи</TableCell>
+                  <TableCell>Дії</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {runs.length === 0 ? (
-                  <TableRow><TableCell colSpan={6} align="center">Немає історії запусків</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={7} align="center">Немає історії запусків</TableCell></TableRow>
                 ) : runs.map((run) => (
                   <TableRow
                     key={run.id}
@@ -722,6 +723,33 @@ export default function App() {
                     </TableCell>
                     <TableCell onClick={() => loadRunDetails(run.id)}>
                       {run.insights_count + run.students_count + run.teachers_count}
+                    </TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <IconButton
+                        size="small"
+                        color="error"
+                        onClick={async () => {
+                          if (window.confirm(`Видалити запуск #${run.id}?`)) {
+                            try {
+                              const response = await fetch(`/api/runs/${run.id}`, { method: 'DELETE' })
+                              if (response.ok) {
+                                setSnack(`Запуск #${run.id} видалено`)
+                                await loadHistory()
+                                if (selectedRun?.run.id === run.id) {
+                                  setSelectedRun(null)
+                                }
+                              } else {
+                                const error = await response.json()
+                                setSnack(`Помилка: ${error.error}`)
+                              }
+                            } catch (e: any) {
+                              setSnack(`Помилка: ${e.message}`)
+                            }
+                          }
+                        }}
+                      >
+                        <span style={{ fontSize: '16px' }}>🗑️</span>
+                      </IconButton>
                     </TableCell>
                   </TableRow>
                 ))}
