@@ -31,15 +31,11 @@ COPY config/ ./config/
 # Copy built frontend from stage 1
 COPY --from=frontend-builder /app/web/dist ./web/dist
 
-# Copy Python entrypoint script
-COPY start.py /app/start.py
-RUN chmod +x /app/start.py
-
 # Create directory for database
 RUN mkdir -p /app/data
 
-# Expose port (Railway will override with $PORT)
+# Expose port
 EXPOSE 8000
 
-# Use Python script to properly read PORT env var
-CMD ["python", "/app/start.py"]
+# Start uvicorn directly - Railway proxies all ports automatically
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
