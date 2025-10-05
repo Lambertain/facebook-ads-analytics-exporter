@@ -11,7 +11,16 @@ from contextlib import contextmanager
 from .models import Base
 
 # Database file location
-DB_PATH = os.getenv("DATABASE_URL", "sqlite:///./ecademy.db")
+# Use /app/data for Railway, fallback to local for development
+# NOTE: Railway ephemeral storage - DB will be cleared on redeploy
+# For persistent storage, set DATABASE_URL to PostgreSQL or use Railway Volume
+DB_DIR = os.getenv("DATABASE_DIR", "/app/data" if os.path.exists("/app/data") else ".")
+os.makedirs(DB_DIR, exist_ok=True)  # Ensure directory exists
+DB_PATH = os.getenv("DATABASE_URL", f"sqlite:///{DB_DIR}/ecademy.db")
+
+import logging
+logger = logging.getLogger(__name__)
+logger.info(f"Database path: {DB_PATH}")
 
 # Create engine with SQLite-specific configuration
 engine = create_engine(

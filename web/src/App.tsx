@@ -625,6 +625,10 @@ export default function App() {
 
   const historyTab = (
     <Box sx={{ mt: 2 }}>
+      <Alert severity="info" sx={{ mb: 2 }}>
+        <strong>Примітка:</strong> Історія зберігається тільки протягом поточної сесії.
+        При оновленні додатку історія очищується. Для постійного зберігання потрібна PostgreSQL база даних.
+      </Alert>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2, gap: 2 }}>
         <Typography variant="h5">Історія запусків</Typography>
         <Button variant="outlined" size="small" onClick={() => setHistoryFilter('')}>Усі</Button>
