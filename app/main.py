@@ -65,8 +65,13 @@ app.add_middleware(
 )
 
 # Security: Trusted host protection
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,*.loca.lt,*.railway.app").split(",")
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
+# Railway domain pattern: facebook-ads-analytics-exporter-production.up.railway.app
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,*.loca.lt,*.up.railway.app,*.railway.app").split(",")
+# For Railway: disable strict host checking by allowing all hosts if RAILWAY_ENVIRONMENT is set
+if os.getenv("RAILWAY_ENVIRONMENT"):
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
+else:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 # Security: Add security headers middleware
 @app.middleware("http")
