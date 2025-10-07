@@ -1103,7 +1103,8 @@ def _add_ads_charts(ws):
 
 
 @app.post("/api/download-excel")
-async def download_excel(payload: Dict[str, Any]):
+@limiter.limit("5/minute")
+async def download_excel(request: Request, payload: Dict[str, Any]):
     """
     Експорт даних у Excel з підтримкою різних типів даних.
 
@@ -1124,6 +1125,13 @@ async def download_excel(payload: Dict[str, Any]):
     start_date = payload.get("start_date")
     end_date = payload.get("end_date")
 
+    # Валідація data_type
+    if data_type not in ["ads", "students", "teachers"]:
+        return JSONResponse(
+            {"error": f"Невірний тип даних. Дозволені: 'ads', 'students', 'teachers'. Отримано: '{data_type}'"},
+            status_code=400
+        )
+
     try:
         wb = Workbook()
         ws = wb.active
@@ -1140,7 +1148,7 @@ async def download_excel(payload: Dict[str, Any]):
             mapping = load_mapping()
             sheet_name = mapping.get("students", {}).get("sheet_name", "Students")
 
-            source_wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+            source_wb = openpyxl.load_workbook(excel_path, data_only=True)
             if sheet_name not in source_wb.sheetnames:
                 return JSONResponse({"error": f"Аркуш '{sheet_name}' не знайдено"}, status_code=404)
 
