@@ -449,7 +449,7 @@ def alfacrm_auth_get_token() -> str:
     api_key = os.getenv("ALFACRM_API_KEY")
     if not base_url or not email or not api_key:
         raise RuntimeError("ALFACRM_BASE_URL/EMAIL/API_KEY not set")
-    url = base_url.rstrip('/') + "/api/v2/auth/login"
+    url = base_url.rstrip('/') + "/v2api/auth/login"
     try:
         resp = requests.post(url, json={"email": email, "api_key": api_key}, timeout=CRM_TIMEOUT)
         resp.raise_for_status()
@@ -472,7 +472,7 @@ def alfacrm_auth_get_token() -> str:
 def alfacrm_list_companies() -> Dict[str, Any]:
     token = alfacrm_auth_get_token()
     base_url = os.getenv("ALFACRM_BASE_URL")
-    url = base_url.rstrip('/') + "/api/v2/company/index"
+    url = base_url.rstrip('/') + "/v2api/company/index"
     try:
         resp = requests.get(url, headers={"X-ALFACRM-TOKEN": token}, timeout=CRM_TIMEOUT)
         resp.raise_for_status()
@@ -489,15 +489,15 @@ def alfacrm_list_companies() -> Dict[str, Any]:
     before_sleep=before_sleep_log(logger, logging.WARNING)
 )
 def alfacrm_list_students(page: int = 1, page_size: int = 200) -> Dict[str, Any]:
-    """Fetch students list from AlfaCRM. Adjust endpoint if your account uses different path."""
+    """Fetch students list from AlfaCRM. Uses customer/index with branch_ids filter."""
     token = alfacrm_auth_get_token()
     base_url = os.getenv("ALFACRM_BASE_URL")
     company_id = os.getenv("ALFACRM_COMPANY_ID")
     if not company_id:
         raise RuntimeError("ALFACRM_COMPANY_ID is not set")
-    url = base_url.rstrip('/') + "/api/v2/student/index"
+    url = base_url.rstrip('/') + "/v2api/customer/index"
     payload = {
-        "company_id": int(company_id),
+        "branch_ids": [int(company_id)],
         "page": page,
         "page_size": page_size,
     }
