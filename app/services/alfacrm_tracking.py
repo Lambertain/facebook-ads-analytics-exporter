@@ -219,8 +219,8 @@ def track_campaign_leads(
 
         else:
             not_found_count += 1
-            # Лиды которые не найдены в CRM считаем как "Не розібрані"
-            status_counts["Не розібрані"] += 1
+            # Лиды которые не найдены в CRM считаем как "Не розібраний"
+            status_counts["Не розібраний"] += 1
 
     logger.info(
         f"Campaign tracking: {matched_count} matched, {not_found_count} not found in CRM"
