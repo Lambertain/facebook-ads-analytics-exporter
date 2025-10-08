@@ -33,7 +33,12 @@ async def get_leadgen_forms(page_id: str, page_token: str) -> List[Dict]:
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(url, params=params)
-        response.raise_for_status()
+
+        if response.status_code != 200:
+            error_data = response.json() if response.text else {}
+            logger.error(f"Meta API Error: {response.status_code} - {error_data}")
+            response.raise_for_status()
+
         data = response.json()
 
     forms = data.get("data", [])
