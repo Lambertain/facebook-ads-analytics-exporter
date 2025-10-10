@@ -11,6 +11,9 @@ from tenacity import (
     before_sleep_log
 )
 
+# Import helper function from google_sheets module
+from .google_sheets import _extract_field
+
 logger = logging.getLogger(__name__)
 
 CRM_TIMEOUT = int(os.getenv("CRM_API_TIMEOUT", "15"))
@@ -20,7 +23,17 @@ CRM_MAX_RETRIES = int(os.getenv("CRM_API_MAX_RETRIES", "2"))
 async def enrich_leads_with_status(leads: List[Dict[str, Any]], provider: str) -> List[Dict[str, Any]]:
     """Attach CRM status to each lead with graceful degradation.
 
-    provider: none|amocrm|bitrix24|hubspot|pipedrive|nethunt|alfacrm
+    Args:
+        leads: List of leads to enrich
+        provider: CRM provider name (none|nethunt|alfacrm)
+
+    Returns:
+        List of enriched leads with fields:
+        - crm_status: Lead status in CRM
+        - crm_stage: Lead stage in funnel
+        - crm_id: CRM record ID (if matched)
+        - crm_matched_by: Match method (phone|email)
+        - funnel_path: List of statuses lead passed through (e.g., ["new", "contacted", "converted"])
 
     Graceful degradation: If CRM is unavailable, returns leads without enrichment
     instead of failing the entire pipeline.
@@ -28,29 +41,22 @@ async def enrich_leads_with_status(leads: List[Dict[str, Any]], provider: str) -
     if provider == "none":
         logger.info("CRM enrichment disabled (provider=none)")
         return [
-            {**l, "crm_status": None, "crm_stage": None}
+            {**l, "crm_status": None, "crm_stage": None, "funnel_path": None}
             for l in leads
         ]
 
     logger.info(f"Starting CRM enrichment with provider: {provider} for {len(leads)} leads")
 
     try:
-        if provider == "amocrm":
-            result = await _enrich_amocrm(leads)
-        elif provider == "bitrix24":
-            result = await _enrich_bitrix(leads)
-        elif provider == "hubspot":
-            result = await _enrich_hubspot(leads)
-        elif provider == "pipedrive":
-            result = await _enrich_pipedrive(leads)
-        elif provider == "nethunt":
+        if provider == "nethunt":
             result = await _enrich_nethunt(leads)
         elif provider == "alfacrm":
             result = await _enrich_alfacrm(leads)
         else:
-            logger.warning(f"Unknown CRM provider: {provider}")
+            logger.warning(f"Unknown or unsupported CRM provider: {provider}")
+            logger.info(f"Supported providers: nethunt, alfacrm")
             return [
-                {**l, "crm_status": "unknown_provider", "crm_stage": None}
+                {**l, "crm_status": "unsupported_provider", "crm_stage": None, "funnel_path": None}
                 for l in leads
             ]
 
@@ -61,37 +67,9 @@ async def enrich_leads_with_status(leads: List[Dict[str, Any]], provider: str) -
         logger.error(f"CRM enrichment failed for provider {provider}: {type(e).__name__}: {e}")
         logger.warning(f"Graceful degradation: returning {len(leads)} leads without CRM enrichment")
         return [
-            {**l, "crm_status": "enrichment_failed", "crm_stage": None}
+            {**l, "crm_status": "enrichment_failed", "crm_stage": None, "funnel_path": None}
             for l in leads
         ]
-
-
-# The following are minimal placeholders. Replace with real API calls and matching logic.
-
-async def _enrich_amocrm(leads: List[Dict[str, Any]]):
-    base_url = os.getenv("AMO_BASE_URL")
-    token = os.getenv("AMO_ACCESS_TOKEN")
-    # TODO: Find leads by phone/email, then map status/stage.
-    return [{**l, "crm_status": "stub", "crm_stage": None} for l in leads]
-
-
-async def _enrich_bitrix(leads: List[Dict[str, Any]]):
-    base_url = os.getenv("BITRIX_BASE_URL")
-    wh = os.getenv("BITRIX_WEBHOOK_TOKEN")
-    # TODO: Use crm.lead.list or crm.deal.list with filter by phone/email
-    return [{**l, "crm_status": "stub", "crm_stage": None} for l in leads]
-
-
-async def _enrich_hubspot(leads: List[Dict[str, Any]]):
-    token = os.getenv("HUBSPOT_ACCESS_TOKEN")
-    # TODO: Search contacts by email/phone, then get deal/pipeline stage
-    return [{**l, "crm_status": "stub", "crm_stage": None} for l in leads]
-
-
-async def _enrich_pipedrive(leads: List[Dict[str, Any]]):
-    token = os.getenv("PIPEDRIVE_API_TOKEN")
-    # TODO: Search persons by email/phone, then get deals and stages
-    return [{**l, "crm_status": "stub", "crm_stage": None} for l in leads]
 
 
 async def _enrich_nethunt(leads: List[Dict[str, Any]]):
@@ -101,7 +79,7 @@ async def _enrich_nethunt(leads: List[Dict[str, Any]]):
 
     if not auth:
         logger.warning("NETHUNT_BASIC_AUTH not configured, skipping enrichment")
-        return [{**l, "crm_status": "not_configured", "crm_stage": None} for l in leads]
+        return [{**l, "crm_status": "not_configured", "crm_stage": None, "funnel_path": None} for l in leads]
 
     try:
         # Получаем список записей из NetHunt
@@ -110,7 +88,7 @@ async def _enrich_nethunt(leads: List[Dict[str, Any]]):
             folders = nethunt_list_folders()
             if not folders:
                 logger.error("No NetHunt folders found")
-                return [{**l, "crm_status": "api_error", "crm_stage": None} for l in leads]
+                return [{**l, "crm_status": "api_error", "crm_stage": None, "funnel_path": None} for l in leads]
             folder_id = folders[0].get("id")
             logger.info(f"Using NetHunt folder: {folders[0].get('name')} ({folder_id})")
 
@@ -164,21 +142,26 @@ async def _enrich_nethunt(leads: List[Dict[str, Any]]):
                 # Маппинг статусов NetHunt
                 crm_status, crm_stage = _map_nethunt_status(crm_record)
 
+                # Восстанавливаем путь лида через воронку
+                funnel_path = _build_nethunt_funnel_path(crm_status, crm_stage)
+
                 enriched_leads.append({
                     **lead,
                     "crm_status": crm_status,
                     "crm_stage": crm_stage,
                     "crm_id": crm_record.get("id"),
-                    "crm_matched_by": matched_by
+                    "crm_matched_by": matched_by,
+                    "funnel_path": funnel_path  # Путь через воронку: new → contacted → ... → current
                 })
-                logger.debug(f"Matched lead {lead.get('id')} with NetHunt record {crm_record.get('id')}")
+                logger.debug(f"Matched lead {lead.get('id')} with NetHunt record {crm_record.get('id')}, funnel_path: {funnel_path}")
             else:
                 # Лид не найден в CRM
                 enriched_leads.append({
                     **lead,
                     "crm_status": "not_found",
                     "crm_stage": None,
-                    "crm_id": None
+                    "crm_id": None,
+                    "funnel_path": None
                 })
 
         logger.info(f"NetHunt enrichment: {len([l for l in enriched_leads if l.get('crm_id')])} matched, {len([l for l in enriched_leads if l.get('crm_status') == 'not_found'])} not found")
@@ -186,7 +169,7 @@ async def _enrich_nethunt(leads: List[Dict[str, Any]]):
 
     except Exception as e:
         logger.error(f"NetHunt enrichment failed: {type(e).__name__}: {e}")
-        return [{**l, "crm_status": "enrichment_error", "crm_stage": None} for l in leads]
+        return [{**l, "crm_status": "enrichment_error", "crm_stage": None, "funnel_path": None} for l in leads]
 
 
 async def _enrich_alfacrm(leads: List[Dict[str, Any]]):
@@ -198,7 +181,7 @@ async def _enrich_alfacrm(leads: List[Dict[str, Any]]):
     """
     if not os.getenv("ALFACRM_BASE_URL") or not os.getenv("ALFACRM_COMPANY_ID"):
         logger.warning("AlfaCRM credentials not configured, skipping enrichment")
-        return [{**l, "crm_status": "not_configured", "crm_stage": None} for l in leads]
+        return [{**l, "crm_status": "not_configured", "crm_stage": None, "funnel_path": None} for l in leads]
 
     try:
         # Используем существующий helper для получения студентов
@@ -258,21 +241,26 @@ async def _enrich_alfacrm(leads: List[Dict[str, Any]]):
                 crm_status = _map_alfacrm_status(status_id)
                 crm_stage = _map_alfacrm_stage(crm_student)
 
+                # Восстанавливаем путь лида через воронку
+                funnel_path = _build_alfacrm_funnel_path(crm_status, crm_stage)
+
                 enriched_leads.append({
                     **lead,
                     "crm_status": crm_status,
                     "crm_stage": crm_stage,
                     "crm_id": crm_student.get("id"),
-                    "crm_matched_by": matched_by
+                    "crm_matched_by": matched_by,
+                    "funnel_path": funnel_path  # Путь через воронку: new → contacted → ... → current
                 })
-                logger.debug(f"Matched lead {lead.get('id')} with AlfaCRM student {crm_student.get('id')}")
+                logger.debug(f"Matched lead {lead.get('id')} with AlfaCRM student {crm_student.get('id')}, funnel_path: {funnel_path}")
             else:
                 # Лид не найден в CRM
                 enriched_leads.append({
                     **lead,
                     "crm_status": "not_found",
                     "crm_stage": None,
-                    "crm_id": None
+                    "crm_id": None,
+                    "funnel_path": None
                 })
 
         logger.info(f"AlfaCRM enrichment: {len([l for l in enriched_leads if l.get('crm_id')])} matched, {len([l for l in enriched_leads if l.get('crm_status') == 'not_found'])} not found")
@@ -280,7 +268,7 @@ async def _enrich_alfacrm(leads: List[Dict[str, Any]]):
 
     except Exception as e:
         logger.error(f"AlfaCRM enrichment failed: {type(e).__name__}: {e}")
-        return [{**l, "crm_status": "enrichment_error", "crm_stage": None} for l in leads]
+        return [{**l, "crm_status": "enrichment_error", "crm_stage": None, "funnel_path": None} for l in leads]
 
 
 # Mapping functions for CRM statuses to universal format
@@ -309,6 +297,43 @@ def _map_alfacrm_status(status_id: int) -> str:
         8: "no_answer"             # Недозвон
     }
     return status_map.get(status_id, "unknown")
+
+
+def _build_alfacrm_funnel_path(status: str, stage: str) -> List[str]:
+    """
+    Восстановить путь лида через воронку на основе текущего статуса.
+
+    Логика восстановления:
+    - Воронка движется линейно: new → contacted → in_progress → trial_scheduled → trial_completed → converted
+    - Если лид на статусе "converted", значит он прошел все предыдущие этапы
+    - Статусы "archived" и "no_answer" могут быть на любом этапе
+
+    Args:
+        status: Текущий статус лида (результат _map_alfacrm_status)
+        stage: Текущая стадия лида (результат _map_alfacrm_stage)
+
+    Returns:
+        Список статусов, через которые прошел лид (от начала до текущего)
+    """
+    # Определяем полную последовательность воронки
+    full_funnel = ["new", "contacted", "in_progress", "trial_scheduled", "trial_completed", "converted"]
+
+    # Для archived и no_answer - минимальный путь (только текущий статус)
+    if status in ["archived", "no_answer"]:
+        return ["new", status]
+
+    # Для unknown статуса
+    if status == "unknown":
+        return ["unknown"]
+
+    # Находим индекс текущего статуса в воронке
+    try:
+        current_index = full_funnel.index(status)
+        # Возвращаем путь от начала до текущего статуса (включительно)
+        return full_funnel[:current_index + 1]
+    except ValueError:
+        # Если статус не найден в стандартной воронке, возвращаем минимальный путь
+        return ["new", status]
 
 
 def _map_alfacrm_stage(student: Dict[str, Any]) -> str:
@@ -365,6 +390,43 @@ def _map_nethunt_status(record: Dict[str, Any]) -> tuple[str, str]:
             return (status, stage)
 
     return ("unknown", "unknown")
+
+
+def _build_nethunt_funnel_path(status: str, stage: str) -> List[str]:
+    """
+    Восстановить путь лида через воронку NetHunt на основе текущего статуса.
+
+    Логика восстановления:
+    - Воронка движется линейно: new → contacted → in_progress → trial_scheduled → converted
+    - Если лид на статусе "converted", значит он прошел все предыдущие этапы
+    - Статус "archived" может быть на любом этапе
+
+    Args:
+        status: Текущий статус лида (из _map_nethunt_status)
+        stage: Текущая стадия лида (из _map_nethunt_status)
+
+    Returns:
+        Список статусов, через которые прошел лид (от начала до текущего)
+    """
+    # Определяем полную последовательность воронки NetHunt
+    full_funnel = ["new", "contacted", "in_progress", "trial_scheduled", "converted"]
+
+    # Для archived - минимальный путь
+    if status == "archived":
+        return ["new", "archived"]
+
+    # Для unknown статуса
+    if status == "unknown":
+        return ["unknown"]
+
+    # Находим индекс текущего статуса в воронке
+    try:
+        current_index = full_funnel.index(status)
+        # Возвращаем путь от начала до текущего статуса (включительно)
+        return full_funnel[:current_index + 1]
+    except ValueError:
+        # Если статус не найден в стандартной воронке, возвращаем минимальный путь
+        return ["new", status]
 
 
 # Helper calls for inspection endpoints
