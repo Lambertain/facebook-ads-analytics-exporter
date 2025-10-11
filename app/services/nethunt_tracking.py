@@ -1,36 +1,45 @@
 """
 NetHunt Lead Tracking Service
 
-Трекинг прогресса лидов из Meta Ads через статусы NetHunt CRM.
-Подсчет количества лидов на каждом этапе воронки для учителей.
+Трекинг прогресса лидов (учителей) из Meta Ads через РЕАЛЬНУЮ историю изменений NetHunt API.
+Использует endpoint /triggers/record-change/ для получения полной истории статусов.
+
+ОТЛИЧИЕ ОТ ALFACRM:
+- AlfaCRM: Inference подход (восстановление пути из текущего статуса)
+- NetHunt: Real history (полная история изменений из API)
+
+Преимущества NetHunt подхода:
+- Точные временные метки изменений
+- Информация о том, кто изменил статус
+- История всех полей, не только статус
 """
 import os
 import logging
+import requests
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 import sys
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log
+)
 
-# Добавляем путь к app для импорта connectors
+# Добавляем путь к app для импорта connectors и config
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from connectors.crm import nethunt_list_folders, nethunt_list_records
+from config.settings import (
+    NETHUNT_BASE_URL,
+    NETHUNT_AUTH,
+    NETHUNT_TIMEOUT,
+    NETHUNT_STATUS_MAPPING,
+    NETHUNT_FOLDER_ID
+)
 
 logger = logging.getLogger(__name__)
-
-
-# Маппинг статусов NetHunt в названия столбцов таблицы
-# ВАЖНО: Эти статусы нужно уточнить у клиента после получения реальных данных
-NETHUNT_STATUS_MAPPING = {
-    "new": "Нові",
-    "contacted": "Контакт встановлено",
-    "qualified": "Кваліфіковані",
-    "interview_scheduled": "Співбесіда призначена",
-    "interview_completed": "Співбесіда проведена",
-    "offer_sent": "Офер відправлено",
-    "hired": "Найнято",
-    "rejected": "Відмова",
-    "no_answer": "Недзвін",
-}
 
 
 def normalize_contact(contact: Optional[str]) -> Optional[str]:
@@ -148,6 +157,222 @@ def map_nethunt_status_to_column(status_name: Optional[str]) -> str:
     return status_name.capitalize()
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((
+        requests.exceptions.Timeout,
+        requests.exceptions.ConnectionError,
+        requests.exceptions.HTTPError
+    )),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+    reraise=True
+)
+def _nethunt_api_call_with_retry(url: str, headers: Dict[str, str], timeout: int) -> requests.Response:
+    """
+    Выполнить HTTP запрос к NetHunt API с retry механизмом.
+
+    Args:
+        url: URL endpoint
+        headers: HTTP заголовки
+        timeout: Timeout в секундах
+
+    Returns:
+        Response объект
+
+    Raises:
+        requests.exceptions.HTTPError: При ошибках HTTP
+        requests.exceptions.Timeout: При timeout
+        requests.exceptions.ConnectionError: При проблемах с соединением
+    """
+    response = requests.get(url, headers=headers, timeout=timeout)
+    response.raise_for_status()
+    return response
+
+
+def _validate_nethunt_changes_response(data: Any) -> bool:
+    """
+    Валидировать структуру ответа NetHunt API для record changes.
+
+    Args:
+        data: Данные из response.json()
+
+    Returns:
+        True если структура валидна, False иначе
+    """
+    # Проверка что это список
+    if not isinstance(data, list):
+        logger.error(f"Invalid NetHunt response: expected list, got {type(data).__name__}")
+        return False
+
+    # Проверка структуры каждого изменения
+    for idx, change in enumerate(data):
+        if not isinstance(change, dict):
+            logger.warning(f"Change #{idx} is not a dict: {type(change).__name__}")
+            continue
+
+        # Обязательные поля
+        required_fields = ["recordId", "time"]
+        missing_fields = [f for f in required_fields if f not in change]
+
+        if missing_fields:
+            logger.warning(f"Change #{idx} missing required fields: {missing_fields}")
+
+    return True
+
+
+def nethunt_get_record_changes(
+    folder_id: str,
+    since_date: Optional[str] = None,
+    limit: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """
+    Получить историю изменений записей из папки NetHunt.
+
+    Использует endpoint /triggers/record-change/{folder_id} для получения
+    полной истории всех изменений полей.
+
+    Включает:
+    - Retry механизм с exponential backoff (3 попытки)
+    - Валидацию структуры API ответа
+    - Детальное логирование ошибок
+    - Опциональную фильтрацию по дате (для уменьшения объема данных)
+    - Опциональный лимит результатов
+
+    Args:
+        folder_id: ID папки NetHunt
+        since_date: Получить изменения начиная с этой даты (ISO 8601 формат)
+                   Например: "2025-01-01T00:00:00Z"
+        limit: Максимальное количество изменений для возврата
+              (фильтрация после получения от API)
+
+    Returns:
+        Список изменений с структурой:
+        [{
+            "id": "...",
+            "recordId": "ID записи",
+            "time": "2025-10-10T12:00:00Z",
+            "user": "email пользователя",
+            "recordAction": "updated|created|deleted",
+            "fieldActions": [
+                {"field": "status", "oldValue": "new", "newValue": "contacted"}
+            ]
+        }]
+    """
+    if not NETHUNT_AUTH:
+        logger.error("NETHUNT_BASIC_AUTH not configured")
+        return []
+
+    url = f"{NETHUNT_BASE_URL}/triggers/record-change/{folder_id}"
+    headers = {
+        "Authorization": NETHUNT_AUTH,
+        "Accept": "application/json"
+    }
+
+    try:
+        # Вызов API с retry механизмом
+        response = _nethunt_api_call_with_retry(url, headers, NETHUNT_TIMEOUT)
+
+        # Парсинг JSON
+        try:
+            changes = response.json()
+        except ValueError as e:
+            logger.error(f"Failed to parse NetHunt API response as JSON: {e}")
+            logger.error(f"Response content (first 500 chars): {response.text[:500]}")
+            return []
+
+        # Валидация структуры ответа
+        if not _validate_nethunt_changes_response(changes):
+            logger.error("NetHunt API response validation failed")
+            # Продолжаем работать с данными, но логируем проблему
+            # return []  # Можно раскомментировать для строгой валидации
+
+        # Фильтрация по дате (если указана)
+        if since_date:
+            original_count = len(changes)
+            changes = [
+                change for change in changes
+                if change.get("time", "") >= since_date
+            ]
+            logger.info(
+                f"Filtered changes by date (since {since_date}): "
+                f"{original_count} -> {len(changes)}"
+            )
+
+        # Ограничение результатов (если указано)
+        if limit and limit > 0:
+            original_count = len(changes)
+            changes = changes[:limit]
+            if original_count > limit:
+                logger.info(f"Limited results from {original_count} to {limit}")
+
+        logger.info(f"Loaded {len(changes)} record changes from NetHunt folder {folder_id}")
+        return changes
+
+    except requests.exceptions.HTTPError as e:
+        logger.error(
+            f"NetHunt API HTTP error: {e.response.status_code}, "
+            f"URL: {url}, "
+            f"Response: {e.response.text[:200] if hasattr(e.response, 'text') else 'N/A'}"
+        )
+        return []
+    except requests.exceptions.Timeout:
+        logger.error(f"NetHunt API timeout after {NETHUNT_TIMEOUT}s, URL: {url}")
+        return []
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"NetHunt API connection error: {e}, URL: {url}")
+        return []
+    except Exception as e:
+        logger.error(
+            f"Unexpected error in nethunt_get_record_changes: {type(e).__name__}: {e}, "
+            f"URL: {url}",
+            exc_info=True
+        )
+        return []
+
+
+def extract_status_history(record_id: str, all_changes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Извлечь историю изменений статуса для одной записи.
+
+    Args:
+        record_id: ID записи (учителя) в NetHunt
+        all_changes: Все изменения из nethunt_get_record_changes()
+
+    Returns:
+        История статусов в хронологическом порядке:
+        [{
+            "time": "2025-10-01T10:00:00Z",
+            "old_status": "new",
+            "new_status": "contacted",
+            "changed_by": "manager@ecademy.com"
+        }]
+    """
+    status_history = []
+
+    for change in all_changes:
+        if change.get("recordId") != record_id:
+            continue
+
+        field_actions = change.get("fieldActions", [])
+
+        for field_action in field_actions:
+            field_name = field_action.get("field", "").lower()
+
+            # Ищем изменения поля статуса
+            if any(keyword in field_name for keyword in ["status", "статус", "stage", "этап"]):
+                status_history.append({
+                    "time": change.get("time"),
+                    "old_status": field_action.get("oldValue"),
+                    "new_status": field_action.get("newValue"),
+                    "changed_by": change.get("user")
+                })
+
+    # Сортируем по времени
+    status_history.sort(key=lambda x: x.get("time", ""))
+    return status_history
+
+
 def build_teacher_index(records: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """
     Создать индекс учителей (записей NetHunt) по телефону и email для быстрого поиска.
@@ -187,14 +412,18 @@ def build_teacher_index(records: List[Dict[str, Any]]) -> Dict[str, Dict[str, An
 def track_campaign_leads(
     campaign_leads: List[Dict[str, Any]],
     teacher_index: Dict[str, Dict[str, Any]],
+    status_histories: Dict[str, List[Dict[str, Any]]],
     all_status_columns: set
 ) -> Dict[str, int]:
     """
     Подсчитать количество лидов кампании на каждом этапе воронки.
 
+    ИСПОЛЬЗУЕТ РЕАЛЬНУЮ ИСТОРИЮ СТАТУСОВ из NetHunt API!
+
     Args:
         campaign_leads: Список лидов одной кампании из Meta API
         teacher_index: Индекс учителей {normalized_contact: record}
+        status_histories: Истории статусов {record_id: [status_changes]}
         all_status_columns: Множество всех возможных названий столбцов статусов
 
     Returns:
@@ -226,18 +455,38 @@ def track_campaign_leads(
 
         if teacher_record:
             matched_count += 1
+            record_id = teacher_record.get("id")
 
-            # Извлекаем статус учителя
-            status_name = extract_status_from_record(teacher_record)
+            # Получаем историю статусов для этого учителя
+            history = status_histories.get(record_id, [])
 
-            # Преобразуем в название столбца
-            column_name = map_nethunt_status_to_column(status_name)
+            if history:
+                # КЛЮЧЕВОЕ ОТЛИЧИЕ ОТ INFERENCE ПОДХОДА:
+                # Подсчитываем ВСЕ статусы через которые прошел учитель
+                # а не только текущий статус
 
-            # Добавляем столбец если его еще нет
-            if column_name not in status_counts:
-                status_counts[column_name] = 0
+                unique_statuses = set()
+                for change in history:
+                    new_status = change.get("new_status", "").lower() if change.get("new_status") else None
 
-            status_counts[column_name] += 1
+                    if new_status:
+                        # Преобразуем статус в название столбца
+                        column_name = map_nethunt_status_to_column(new_status)
+                        unique_statuses.add(column_name)
+
+                # Засчитываем +1 в каждый статус через который прошел учитель
+                for status_col in unique_statuses:
+                    if status_col not in status_counts:
+                        status_counts[status_col] = 0
+                    status_counts[status_col] += 1
+            else:
+                # Fallback: если нет истории, используем текущий статус
+                status_name = extract_status_from_record(teacher_record)
+                column_name = map_nethunt_status_to_column(status_name)
+
+                if column_name not in status_counts:
+                    status_counts[column_name] = 0
+                status_counts[column_name] += 1
 
         else:
             not_found_count += 1
@@ -245,7 +494,7 @@ def track_campaign_leads(
             status_counts["Нові"] += 1
 
     logger.info(
-        f"Campaign tracking: {matched_count} matched, {not_found_count} not found in NetHunt"
+        f"Teacher campaign tracking: {matched_count} matched, {not_found_count} not found in NetHunt"
     )
 
     return status_counts
@@ -302,8 +551,40 @@ async def track_leads_by_campaigns(
             logger.error(f"Failed to get NetHunt folders: {e}")
             return {}
 
-    # 2. Загрузить все записи учителей из NetHunt
-    logger.info(f"Loading teachers from NetHunt folder {folder_id}...")
+    # 2. Загрузить ИСТОРИЮ изменений записей из NetHunt
+    logger.info(f"Loading record change history from NetHunt folder {folder_id}...")
+
+    # Опциональная фильтрация: загрузить изменения только за последние 90 дней
+    # (можно настроить через ENV переменную для уменьшения нагрузки)
+    since_date = None
+    days_back = os.getenv("NETHUNT_HISTORY_DAYS", None)
+    if days_back:
+        try:
+            from datetime import timedelta
+            since_dt = datetime.now() - timedelta(days=int(days_back))
+            since_date = since_dt.isoformat() + "Z"
+            logger.info(f"Filtering history to last {days_back} days (since {since_date})")
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid NETHUNT_HISTORY_DAYS value: {days_back}, error: {e}")
+
+    all_changes = nethunt_get_record_changes(folder_id, since_date=since_date)
+
+    if not all_changes:
+        logger.warning("No record changes found, falling back to current status only")
+
+    # 3. Построить истории статусов для каждой записи
+    record_ids = set(change.get("recordId") for change in all_changes if change.get("recordId"))
+    status_histories = {}
+
+    for record_id in record_ids:
+        history = extract_status_history(record_id, all_changes)
+        if history:
+            status_histories[record_id] = history
+
+    logger.info(f"Built status history for {len(status_histories)} teachers")
+
+    # 4. Загрузить текущие записи учителей для индексации по контактам
+    logger.info(f"Loading current teacher records from NetHunt folder {folder_id}...")
 
     try:
         all_records = nethunt_list_records(folder_id, limit=1000)
@@ -312,14 +593,22 @@ async def track_leads_by_campaigns(
         logger.error(f"Failed to load NetHunt records: {e}")
         return {}
 
-    # 3. Построить индекс учителей
+    # 5. Построить индекс учителей
     teacher_index = build_teacher_index(all_records)
     logger.info(f"Built teacher index with {len(teacher_index)} contact entries")
 
-    # 4. Собрать все уникальные статусы для создания столбцов
+    # 6. Собрать все уникальные статусы для создания столбцов
     all_status_columns = set(NETHUNT_STATUS_MAPPING.values())
 
-    # Добавить реальные статусы из данных
+    # Добавить реальные статусы из истории
+    for history in status_histories.values():
+        for change in history:
+            new_status = change.get("new_status", "").lower() if change.get("new_status") else None
+            if new_status:
+                column_name = map_nethunt_status_to_column(new_status)
+                all_status_columns.add(column_name)
+
+    # Добавить текущие статусы из данных
     for record in all_records:
         status_name = extract_status_from_record(record)
         if status_name:
@@ -328,16 +617,17 @@ async def track_leads_by_campaigns(
 
     logger.info(f"Found {len(all_status_columns)} unique status columns")
 
-    # 5. Обработать каждую кампанию
+    # 7. Обработать каждую кампанию
     enriched_campaigns = {}
 
     for campaign_id, campaign_data in campaigns_data.items():
         campaign_leads = campaign_data.get("leads", [])
 
-        # Подсчитать статусы для этой кампании
+        # Подсчитать статусы для этой кампании ИСПОЛЬЗУЯ ИСТОРИЮ
         funnel_stats = track_campaign_leads(
             campaign_leads,
             teacher_index,
+            status_histories,
             all_status_columns
         )
 
