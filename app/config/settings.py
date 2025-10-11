@@ -77,3 +77,9 @@ RETRY_MAX_ATTEMPTS = int(os.getenv("RETRY_MAX_ATTEMPTS", "3"))
 RETRY_EXPONENTIAL_BASE = int(os.getenv("RETRY_EXPONENTIAL_BASE", "2"))
 RETRY_MIN_WAIT = int(os.getenv("RETRY_MIN_WAIT", "2"))
 RETRY_MAX_WAIT = int(os.getenv("RETRY_MAX_WAIT", "10"))
+
+# Validation Configuration
+# Строга валідація: якщо True, невалідні дані зупиняють виконання
+# Development режим: false (продовжує з попередженням)
+# Production режим: true (зупиняє виконання)
+NETHUNT_STRICT_VALIDATION = os.getenv("NETHUNT_STRICT_VALIDATION", "false").lower() == "true"

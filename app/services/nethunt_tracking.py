@@ -36,7 +36,8 @@ from config.settings import (
     NETHUNT_AUTH,
     NETHUNT_TIMEOUT,
     NETHUNT_STATUS_MAPPING,
-    NETHUNT_FOLDER_ID
+    NETHUNT_FOLDER_ID,
+    NETHUNT_STRICT_VALIDATION
 )
 
 logger = logging.getLogger(__name__)
@@ -284,8 +285,19 @@ def nethunt_get_record_changes(
         # Валидация структуры ответа
         if not _validate_nethunt_changes_response(changes):
             logger.error("NetHunt API response validation failed")
-            # Продолжаем работать с данными, но логируем проблему
-            # return []  # Можно раскомментировать для строгой валидации
+
+            if NETHUNT_STRICT_VALIDATION:
+                # Production режим: зупиняємо виконання
+                logger.critical(
+                    "NETHUNT_STRICT_VALIDATION=true - aborting execution due to invalid response"
+                )
+                return []
+            else:
+                # Development режим: продовжуємо з попередженням
+                logger.warning(
+                    "Continuing with potentially invalid data (NETHUNT_STRICT_VALIDATION=false). "
+                    "Set NETHUNT_STRICT_VALIDATION=true for production."
+                )
 
         # Фильтрация по дате (если указана)
         if since_date:
@@ -461,20 +473,33 @@ def track_campaign_leads(
             history = status_histories.get(record_id, [])
 
             if history:
-                # КЛЮЧЕВОЕ ОТЛИЧИЕ ОТ INFERENCE ПОДХОДА:
-                # Подсчитываем ВСЕ статусы через которые прошел учитель
-                # а не только текущий статус
+                # КЛЮЧОВА РІЗНИЦЯ ВІД ALFACRM INFERENCE ПІДХОДУ:
+                #
+                # AlfaCRM (студенти):
+                # - Inference підхід: відновлюємо шлях з поточного статусу
+                # - Приклад: якщо статус = "Оплата" → інферуємо [Новий, Контакт, Пробний, Оплата]
+                #
+                # NetHunt (вчителі):
+                # - Real history: використовуємо реальну історію змін з API
+                # - Приклад: якщо історія = [New → Contacted → Qualified → Hired]
+                #   то засчитуємо +1 в КОЖЕН стовпець: ["Нові", "Контакт", "Кваліфіковані", "Найнято"]
+                #
+                # Це дає НАКОПИЧУВАЛЬНУ статистику воронки:
+                # - Кожен наступний статус є підмножиною попереднього (Найнято ⊆ Кваліфіковані ⊆ Контакт ⊆ Нові)
+                # - Дозволяє аналізувати конверсію між етапами: (Найнято / Кваліфіковані) * 100%
 
                 unique_statuses = set()
                 for change in history:
                     new_status = change.get("new_status", "").lower() if change.get("new_status") else None
 
                     if new_status:
-                        # Преобразуем статус в название столбца
+                        # Перетворюємо статус NetHunt → назва стовпця таблиці
+                        # Використовуємо NETHUNT_STATUS_MAPPING з settings.py
                         column_name = map_nethunt_status_to_column(new_status)
                         unique_statuses.add(column_name)
 
-                # Засчитываем +1 в каждый статус через который прошел учитель
+                # Засчитуємо вчителя в КОЖЕН статус через який він пройшов
+                # (це накопичувальна метрика для аналізу конверсії по етапах)
                 for status_col in unique_statuses:
                     if status_col not in status_counts:
                         status_counts[status_col] = 0
