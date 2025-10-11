@@ -292,3 +292,47 @@ export async function exportMetaExcel(data: {
   window.URL.revokeObjectURL(url)
 }
 
+// Lead Journey Tracking types
+export interface JourneyStats {
+  total_steps: number
+  conversion_reached: boolean
+  current_status: number
+  current_status_name: string
+  funnel_type: 'main' | 'secondary'
+}
+
+export interface EnrichedStudent {
+  id: number
+  name: string
+  phone: string
+  email: string
+  lead_status_id: number
+  journey_status_ids: number[]
+  journey_status_names: string[]
+  journey_stats: JourneyStats
+  [key: string]: any
+}
+
+export interface StudentsWithJourneyResponse {
+  students: EnrichedStudent[]
+  count: number
+  enrichment_info: {
+    total_statuses_tracked: number
+    funnels: string[]
+  }
+}
+
+export async function getStudentsWithJourney(params?: {
+  start_date?: string
+  end_date?: string
+}): Promise<StudentsWithJourneyResponse> {
+  const queryParams = new URLSearchParams()
+  if (params?.start_date) queryParams.append('start_date', params.start_date)
+  if (params?.end_date) queryParams.append('end_date', params.end_date)
+
+  const url = `${API_BASE}/api/students-with-journey${queryParams.toString() ? '?' + queryParams.toString() : ''}`
+  const r = await fetch(url)
+  if (!r.ok) throw new Error('Failed to load students with journey data')
+  return r.json()
+}
+

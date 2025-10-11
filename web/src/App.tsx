@@ -11,8 +11,9 @@ import { DatePicker, LocalizationProvider } from '@mui/x-date-pickers'
 import dayjs, { Dayjs } from 'dayjs'
 import { ConfigMap, getConfig, inspectExcelHeaders, listAlfaCompanies, listNetHuntFolders, openEventStream, startJob, runAnalytics, updateConfig, getMetaData, exportMetaExcel, saveRunHistory } from './api'
 import StudentsTable from './StudentsTable'
+import LeadJourneyTable from './LeadJourneyTable'
 
-type TabKey = 'instructions' | 'run' | 'settings' | 'history'
+type TabKey = 'instructions' | 'run' | 'settings' | 'history' | 'journey'
 type DataTabKey = 'students' | 'teachers' | 'ads'
 
 interface PipelineRun {
@@ -979,6 +980,23 @@ export default function App() {
     </Box>
   )
 
+  const journeyTab = (
+    <Box sx={{ mt: 2 }}>
+      <Typography variant="h5" sx={{ mb: 2 }}>Lead Journey Tracking - Історія лідів через воронку</Typography>
+
+      <Alert severity="info" sx={{ mb: 2 }}>
+        <strong>Інтелектуальне відстеження історії лідів:</strong><br/>
+        Система автоматично відновлює повний шлях кожного ліда через воронку продажів на основі поточного статусу в AlfaCRM.
+        Відстежуються всі 38 статусів у двох паралельних воронках (основна та вторинна).
+      </Alert>
+
+      <LeadJourneyTable
+        startDate={start?.format('YYYY-MM-DD')}
+        endDate={end?.format('YYYY-MM-DD')}
+      />
+    </Box>
+  )
+
   return (
     <Box>
       <AppBar position="static">
@@ -989,13 +1007,18 @@ export default function App() {
           <Tabs value={tab} onChange={(_,v)=>setTab(v)} textColor="inherit" indicatorColor="secondary">
             <Tab label="Як користуватись" value="instructions" />
             <Tab label="Запуск" value="run" />
+            <Tab label="Lead Journey" value="journey" />
             <Tab label="Історія" value="history" />
             <Tab label="Налаштування" value="settings" />
           </Tabs>
         </Box>
       </AppBar>
-      <Container maxWidth="lg" sx={{ mt: 2, mb: 4 }}>
-        {tab === 'instructions' ? instructionsTab : tab === 'run' ? runTab : tab === 'history' ? historyTab : settingsTab}
+      <Container maxWidth="xl" sx={{ mt: 2, mb: 4 }}>
+        {tab === 'instructions' ? instructionsTab :
+         tab === 'run' ? runTab :
+         tab === 'journey' ? journeyTab :
+         tab === 'history' ? historyTab :
+         settingsTab}
       </Container>
       <Snackbar open={!!snack} onClose={()=>setSnack(null)} message={snack||''} autoHideDuration={3000} />
     </Box>

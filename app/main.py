@@ -1479,6 +1479,105 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
                 db.commit()
 
 
+@app.get("/api/students-with-journey")
+@limiter.limit("30/minute")
+async def get_students_with_journey(
+    request: Request,
+    start_date: str = None,
+    end_date: str = None
+):
+    """
+    Get students data enriched with lead journey information based on AlfaCRM status.
+
+    Восстанавливает историю лида через воронку 38 статусов AlfaCRM
+    на основе текущего lead_status_id студента.
+
+    Query params:
+    - start_date: Filter by date (YYYY-MM-DD)
+    - end_date: Filter by date (YYYY-MM-DD)
+
+    Returns:
+        {
+            "students": [
+                {
+                    ...student_data,
+                    "journey_status_ids": [13, 11, 1, 32, 12, 6, 2, 3, 9, 4],
+                    "journey_status_names": ["Не розібраний", "Недодзвон", ...],
+                    "journey_stats": {
+                        "total_steps": 10,
+                        "conversion_reached": true,
+                        "current_status": 4,
+                        "current_status_name": "Отримана оплата",
+                        "funnel_type": "main"
+                    }
+                }
+            ],
+            "count": 150
+        }
+    """
+    try:
+        from .services.lead_journey_recovery import batch_enrich_students
+
+        # Получаем студентов из AlfaCRM
+        if not (os.getenv("ALFACRM_BASE_URL") and os.getenv("ALFACRM_COMPANY_ID")):
+            return JSONResponse({"error": "AlfaCRM credentials не налаштовані"}, status_code=400)
+
+        logger.info("Fetching students from AlfaCRM with lead_status_id")
+
+        all_students = []
+        page = 1
+
+        while True:
+            data = crm_tools.alfacrm_list_students(page=page, page_size=200)
+            items = data.get("items", [])
+
+            if not items:
+                break
+
+            all_students.extend(items)
+
+            # Проверяем есть ли еще страницы
+            total = data.get("total", 0)
+            if len(all_students) >= total:
+                break
+
+            page += 1
+
+        logger.info(f"Loaded {len(all_students)} students from AlfaCRM")
+
+        # Обогащаем студентов информацией о пути через воронку
+        enriched_students = batch_enrich_students(all_students)
+
+        # Фильтруем по датам если указаны
+        if start_date or end_date:
+            # Простая фильтрация по created_at или updated_at полям
+            # (AlfaCRM возвращает эти поля)
+            filtered = []
+            for s in enriched_students:
+                created = s.get("created_at") or s.get("date_create") or ""
+                if start_date and str(created) < start_date:
+                    continue
+                if end_date and str(created) > end_date:
+                    continue
+                filtered.append(s)
+            enriched_students = filtered
+
+        logger.info(f"Returning {len(enriched_students)} enriched students with journey data")
+
+        return {
+            "students": enriched_students,
+            "count": len(enriched_students),
+            "enrichment_info": {
+                "total_statuses_tracked": 38,
+                "funnels": ["main", "secondary"]
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching students with journey: {e}")
+        return JSONResponse({"error": f"Помилка отримання даних: {str(e)}"}, status_code=500)
+
+
 # Serve index.html for root path
 @app.get("/", response_class=HTMLResponse)
 async def index():
