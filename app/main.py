@@ -36,6 +36,9 @@ from .middleware.auth import verify_api_key
 from .database import init_db, get_db
 from .models import PipelineRun, RunLog
 from .analytics_processor import AnalyticsProcessor
+from .services import nethunt_tracking
+from .services import alfacrm_tracking
+from .services import meta_leads
 
 
 load_dotenv()
@@ -696,120 +699,343 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
                 "recommendation": ""
             })
 
-        # 5) Формируем данные для вкладки СТУДЕНТИ
+        # 5) Формируем данные для вкладки СТУДЕНТИ з інтеграцією AlfaCRM tracking
         students_data = []
+
+        # Отримуємо трекінг даних для студентів з AlfaCRM
+        students_tracking = {}
+        student_campaigns = {}
+        student_index = {}
+
+        try:
+            meta_page_id = os.getenv("META_PAGE_ID")
+            meta_page_token = os.getenv("META_PAGE_ACCESS_TOKEN")
+
+            if meta_page_id and meta_page_token:
+                # Фільтруємо лідів тільки для кампаній студентів
+                keywords_students = os.getenv("CAMPAIGN_KEYWORDS_STUDENTS", "student,shkolnik").lower().split(",")
+
+                all_campaigns = await meta_leads.get_leads_for_period(
+                    page_id=meta_page_id,
+                    page_token=meta_page_token,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+
+                # Фільтруємо тільки кампанії студентів
+                student_campaigns = {
+                    cid: cdata for cid, cdata in all_campaigns.items()
+                    if any(kw.strip() in cdata.get("campaign_name", "").lower() for kw in keywords_students)
+                }
+
+                # Завантажуємо всіх студентів з AlfaCRM для створення індексу
+                from connectors.crm import alfacrm_list_students
+                all_students = []
+                page = 1
+                while True:
+                    try:
+                        response = alfacrm_list_students(page=page, page_size=500)
+                        students = response.get("items", [])
+                        if not students:
+                            break
+                        all_students.extend(students)
+                        total = response.get("total", 0)
+                        if len(all_students) >= total:
+                            break
+                        page += 1
+                    except Exception as e:
+                        logger.error(f"Failed to load students page {page}: {e}")
+                        break
+
+                # Будуємо індекс студентів
+                from services.alfacrm_tracking import build_student_index
+                student_index = build_student_index(all_students)
+                logger.info(f"Built student index with {len(student_index)} contact entries")
+
+                # Трекінг через AlfaCRM з inference підходом
+                students_tracking = await alfacrm_tracking.track_leads_by_campaigns(
+                    campaigns_data=student_campaigns,
+                    page_size=500
+                )
+                logger.info(f"Loaded student tracking for {len(students_tracking)} campaigns")
+            else:
+                logger.warning("META_PAGE_ID або META_PAGE_ACCESS_TOKEN не налаштовані - пропускаємо трекінг студентів")
+        except Exception as e:
+            logger.error(f"Failed to load student tracking: {e}")
+
         for insight in insights:
             campaign_name = insight.get("campaign_name", "").lower()
+            campaign_id = insight.get("campaign_id", "")
             keywords_students = os.getenv("CAMPAIGN_KEYWORDS_STUDENTS", "student,shkolnik").lower().split(",")
 
             # Проверяем является ли кампания студенческой
             is_student_campaign = any(keyword.strip() in campaign_name for keyword in keywords_students)
 
             if is_student_campaign:
+                # Отримуємо статистику воронки для цієї кампанії
+                campaign_tracking = students_tracking.get(f"campaign_{campaign_id}", {})
+                funnel_stats = campaign_tracking.get("funnel_stats", {})
+
+                # Базові показники
+                leads_count = funnel_stats.get("Кількість лідів", 0)
+                budget = insight.get("spend", 0)
+
+                # Маппінг статусів AlfaCRM на поля endpoint
+                not_processed = funnel_stats.get("Не розібраний", 0)
+                contact_established = funnel_stats.get("Вст контакт зацікавлений", 0)
+                trial_scheduled = funnel_stats.get("Призначено пробне", 0)
+                trial_completed = funnel_stats.get("Проведено пробне", 0)
+                waiting_payment = funnel_stats.get("Чекаємо оплату", 0)
+                purchased = funnel_stats.get("Отримана оплата", 0)
+
+                # Недзвони (всі варіанти)
+                no_answer = (
+                    funnel_stats.get("Недодзвон", 0) +
+                    funnel_stats.get("Недозвон 2", 0) +
+                    funnel_stats.get("Недозвон 3", 0)
+                )
+
+                # Цільові/нецільові
+                target_leads = contact_established  # Всі хто встановив контакт і зацікавлені
+                non_target_leads = not_processed + no_answer  # Необроблені + недзвони
+
+                # Розрахунок відсотків
+                percent_target = round((target_leads / leads_count * 100), 2) if leads_count > 0 else 0
+                percent_non_target = round((non_target_leads / leads_count * 100), 2) if leads_count > 0 else 0
+                percent_contact = round((contact_established / leads_count * 100), 2) if leads_count > 0 else 0
+                percent_conversion = round((purchased / leads_count * 100), 2) if leads_count > 0 else 0
+                percent_no_answer = round((no_answer / leads_count * 100), 2) if leads_count > 0 else 0
+
+                # Розрахунок для пробних уроків
+                percent_trial_scheduled = round((trial_scheduled / leads_count * 100), 2) if leads_count > 0 else 0
+                percent_trial_completed = round((trial_completed / leads_count * 100), 2) if leads_count > 0 else 0
+                percent_trial_conversion = round((trial_completed / trial_scheduled * 100), 2) if trial_scheduled > 0 else 0
+                conversion_trial_to_sale = round((purchased / trial_completed * 100), 2) if trial_completed > 0 else 0
+
+                # Ціна за ліда
+                price_per_lead = round((budget / leads_count), 2) if leads_count > 0 else 0
+                price_per_target_lead = round((budget / target_leads), 2) if target_leads > 0 else 0
+
                 students_data.append({
                     "campaign_name": insight.get("campaign_name", ""),
-                    "campaign_link": f"https://facebook.com/ads/manager/campaigns/edit/{insight.get('campaign_id', '')}",
+                    "campaign_link": f"https://facebook.com/ads/manager/campaigns/edit/{campaign_id}",
                     "analysis_date": datetime.now().strftime("%Y-%m-%d"),
                     "period": f"{start_date} - {end_date}",
-                    "budget": insight.get("spend", 0),
+                    "budget": budget,
                     "location": "треба API",  # Geo targeting требует дополнительный запрос
-                    "leads_count": "треба API",
-                    "leads_check": "треба API",
-                    "not_processed": "треба API",
-                    "contact_established": "треба API",
-                    "in_progress": "треба API",
-                    "trial_scheduled": "треба API",
-                    "trial_completed": "треба API",
-                    "waiting_payment": "треба API",
-                    "purchased": "треба API",
-                    "archive": "треба API",
-                    "no_answer": "треба API",
-                    "archive_non_target": "треба API",
-                    "target_leads": "треба API",
-                    "non_target_leads": "треба API",
-                    "percent_target": "треба API",
-                    "percent_non_target": "треба API",
-                    "percent_contact": "треба API",
-                    "percent_in_progress": "треба API",
-                    "percent_conversion": "треба API",
-                    "percent_archive": "треба API",
-                    "percent_no_answer": "треба API",
-                    "price_per_lead": "треба API",
-                    "price_per_target_lead": "треба API",
+                    "leads_count": leads_count,
+                    "leads_check": leads_count,  # Дублюємо для сумісності
+                    "not_processed": not_processed,
+                    "contact_established": contact_established,
+                    "in_progress": funnel_stats.get("Розмовляли, чекаємо відповідь", 0),
+                    "trial_scheduled": trial_scheduled,
+                    "trial_completed": trial_completed,
+                    "waiting_payment": waiting_payment,
+                    "purchased": purchased,
+                    "archive": funnel_stats.get("Зник після контакту", 0),
+                    "no_answer": no_answer,
+                    "archive_non_target": 0,  # TODO: визначити з клієнтом маппінг
+                    "target_leads": target_leads,
+                    "non_target_leads": non_target_leads,
+                    "percent_target": percent_target,
+                    "percent_non_target": percent_non_target,
+                    "percent_contact": percent_contact,
+                    "percent_in_progress": round((funnel_stats.get("Розмовляли, чекаємо відповідь", 0) / leads_count * 100), 2) if leads_count > 0 else 0,
+                    "percent_conversion": percent_conversion,
+                    "percent_archive": round((funnel_stats.get("Зник після контакту", 0) / leads_count * 100), 2) if leads_count > 0 else 0,
+                    "percent_no_answer": percent_no_answer,
+                    "price_per_lead": price_per_lead,
+                    "price_per_target_lead": price_per_target_lead,
                     "notes": "",
-                    "percent_trial_scheduled": "треба API",
-                    "percent_trial_completed": "треба API",
-                    "percent_trial_conversion": "треба API",
-                    "conversion_trial_to_sale": "треба API"
+                    "percent_trial_scheduled": percent_trial_scheduled,
+                    "percent_trial_completed": percent_trial_completed,
+                    "percent_trial_conversion": percent_trial_conversion,
+                    "conversion_trial_to_sale": conversion_trial_to_sale
                 })
 
-        # 6) Формируем данные для вкладки ВЧИТЕЛІ
+        # 6) Формируем данные для вкладки ВЧИТЕЛІ з інтеграцією NetHunt tracking
         teachers_data = []
+
+        # Отримуємо трекінг даних для вчителів з NetHunt
+        teachers_tracking = {}
+        teacher_campaigns = {}
+        teacher_index = {}
+        teacher_status_histories = {}
+
+        try:
+            meta_page_id = os.getenv("META_PAGE_ID")
+            meta_page_token = os.getenv("META_PAGE_ACCESS_TOKEN")
+            nh_folder = os.getenv("NETHUNT_FOLDER_ID")
+
+            if meta_page_id and meta_page_token and nh_folder:
+                # Фільтруємо лідів тільки для кампаній вчителів
+                keywords_teachers = os.getenv("CAMPAIGN_KEYWORDS_TEACHERS", "teacher,vchitel").lower().split(",")
+
+                all_campaigns = await meta_leads.get_leads_for_period(
+                    page_id=meta_page_id,
+                    page_token=meta_page_token,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+
+                # Фільтруємо тільки кампанії вчителів
+                teacher_campaigns = {
+                    cid: cdata for cid, cdata in all_campaigns.items()
+                    if any(kw.strip() in cdata.get("campaign_name", "").lower() for kw in keywords_teachers)
+                }
+
+                # Завантажуємо історію змін з NetHunt
+                from services.nethunt_tracking import (
+                    nethunt_get_record_changes,
+                    extract_status_history,
+                    build_teacher_index
+                )
+                from connectors.crm import nethunt_list_records
+
+                # Завантажуємо всю історію змін
+                all_changes = nethunt_get_record_changes(nh_folder)
+                logger.info(f"Loaded {len(all_changes)} record changes from NetHunt")
+
+                # Будуємо історії статусів
+                record_ids = set(change.get("recordId") for change in all_changes if change.get("recordId"))
+                for record_id in record_ids:
+                    history = extract_status_history(record_id, all_changes)
+                    if history:
+                        teacher_status_histories[record_id] = history
+                logger.info(f"Built status history for {len(teacher_status_histories)} teachers")
+
+                # Завантажуємо поточні записи вчителів
+                all_records = nethunt_list_records(nh_folder, limit=1000)
+                teacher_index = build_teacher_index(all_records)
+                logger.info(f"Built teacher index with {len(teacher_index)} contact entries")
+
+                # Трекінг через NetHunt з real history підходом
+                teachers_tracking = await nethunt_tracking.track_leads_by_campaigns(
+                    campaigns_data=teacher_campaigns,
+                    folder_id=nh_folder
+                )
+                logger.info(f"Loaded teacher tracking for {len(teachers_tracking)} campaigns")
+            else:
+                logger.warning("META_PAGE_ID, META_PAGE_ACCESS_TOKEN або NETHUNT_FOLDER_ID не налаштовані")
+        except Exception as e:
+            logger.error(f"Failed to load teacher tracking: {e}")
+
         for insight in insights:
             campaign_name = insight.get("campaign_name", "").lower()
+            campaign_id = insight.get("campaign_id", "")
             keywords_teachers = os.getenv("CAMPAIGN_KEYWORDS_TEACHERS", "teacher,vchitel").lower().split(",")
 
             # Проверяем является ли кампания для викладачів
             is_teacher_campaign = any(keyword.strip() in campaign_name for keyword in keywords_teachers)
 
             if is_teacher_campaign:
+                # Отримуємо статистику воронки для цієї кампанії
+                campaign_tracking = teachers_tracking.get(f"campaign_{campaign_id}", {})
+                funnel_stats = campaign_tracking.get("funnel_stats", {})
+
+                # Базові показники
+                leads_count = funnel_stats.get("Кількість лідів", 0)
+                budget = insight.get("spend", 0)
+
+                # Маппінг статусів NetHunt на поля endpoint (основні 9 статусів)
+                new_leads = funnel_stats.get("Нові", 0)
+                contact_established = funnel_stats.get("Контакт встановлено", 0)
+                qualified = funnel_stats.get("Кваліфіковані", 0)
+                interview_scheduled = funnel_stats.get("Співбесіда призначена", 0)
+                interview_completed = funnel_stats.get("Співбесіда проведена", 0)
+                offer_sent = funnel_stats.get("Офер відправлено", 0)
+                hired = funnel_stats.get("Найнято", 0)
+                rejected = funnel_stats.get("Відмова", 0)
+                no_answer = funnel_stats.get("Недзвін", 0)
+
+                # Цільові/нецільові (базова логіка - можна уточнити у клієнта)
+                target_leads = contact_established  # Всі хто встановив контакт
+                non_target_leads = new_leads + no_answer  # Нові + недзвін
+
+                # Конверсії
+                conv_lead_to_interview = round((interview_completed / leads_count * 100), 2) if leads_count > 0 else 0
+                conv_interview_to_hire = round((hired / interview_completed * 100), 2) if interview_completed > 0 else 0
+
+                # Відсотки
+                percent_target = round((target_leads / leads_count * 100), 2) if leads_count > 0 else 0
+                percent_non_target = round((non_target_leads / leads_count * 100), 2) if leads_count > 0 else 0
+
+                # Ціна за ліда
+                price_per_lead = round((budget / leads_count), 2) if leads_count > 0 else 0
+                price_per_target_lead = round((budget / target_leads), 2) if target_leads > 0 else 0
+
                 teachers_data.append({
                     "campaign_name": insight.get("campaign_name", ""),
-                    "campaign_link": f"https://facebook.com/ads/manager/campaigns/edit/{insight.get('campaign_id', '')}",
+                    "campaign_link": f"https://facebook.com/ads/manager/campaigns/edit/{campaign_id}",
                     "analysis_date": datetime.now().strftime("%Y-%m-%d"),
                     "period": f"{start_date} - {end_date}",
-                    "budget": insight.get("spend", 0),
-                    "location": "треба API",
-                    "leads_count": "треба API",
-                    "leads_check": "треба API",
-                    "not_processed": "треба API",
-                    "taken_to_work": "треба API",
-                    "contact_established": "треба API",
-                    "no_answer": "треба API",
-                    "interview": "треба API",
-                    "interview_completed": "треба API",
-                    "no_show": "треба API",
-                    "approved_by_head": "треба API",
-                    "not_approved": "треба API",
-                    "negotiations": "треба API",
-                    "internship": "треба API",
-                    "no_students": "треба API",
-                    "teacher": "треба API",
-                    "lost_refused": "треба API",
-                    "reserve_internship": "треба API",
-                    "reserve_call": "треба API",
-                    "offboarding": "треба API",
-                    "quit": "треба API",
-                    "lost_non_target": "треба API",
-                    "lost_no_answer": "треба API",
-                    "lost_not_relevant": "треба API",
-                    "lost_low_salary": "треба API",
-                    "lost_forever": "треба API",
-                    "lost_check_viber": "треба API",
-                    "lost_ignores": "треба API",
-                    "count_came_interview": "треба API",
-                    "count_not_in_bot": "треба API",
-                    "count_refused_total": "треба API",
-                    "count_in_progress": "треба API",
-                    "count_internship": "треба API",
-                    "target_leads": "треба API",
-                    "non_target_leads": "треба API",
-                    "conversion_refused": "треба API",
-                    "conversion_in_progress": "треба API",
-                    "conversion_lead_to_interview": "треба API",
-                    "conversion_lead_to_intern": "треба API",
-                    "conversion_interview_to_intern": "треба API",
-                    "percent_target": "треба API",
-                    "percent_non_target": "треба API",
-                    "price_per_lead": "треба API",
-                    "price_per_target_lead": "треба API",
-                    "campaign_status": "треба API"
+                    "budget": budget,
+                    "location": "треба API",  # Geo targeting потребує окремий запрос
+                    "leads_count": leads_count,
+                    "leads_check": leads_count,
+                    "new_leads": new_leads,
+                    "contact_established": contact_established,
+                    "qualified": qualified,
+                    "interview_scheduled": interview_scheduled,
+                    "interview_completed": interview_completed,
+                    "offer_sent": offer_sent,
+                    "hired": hired,
+                    "rejected": rejected,
+                    "no_answer": no_answer,
+                    "target_leads": target_leads,
+                    "non_target_leads": non_target_leads,
+                    "conversion_hired": round((hired / leads_count * 100), 2) if leads_count > 0 else 0,
+                    "conversion_qualified": round((qualified / leads_count * 100), 2) if leads_count > 0 else 0,
+                    "conversion_lead_to_interview": conv_lead_to_interview,
+                    "conversion_interview_to_hire": conv_interview_to_hire,
+                    "percent_target": percent_target,
+                    "percent_non_target": percent_non_target,
+                    "price_per_lead": price_per_lead,
+                    "price_per_target_lead": price_per_target_lead,
+                    "campaign_status": "active"  # Можна додати логіку визначення статусу
                 })
+
+        # Додаємо metadata для кольорової маркіровки стовпців в UI
+        column_metadata = _get_column_metadata()
+
+        # Витягуємо телефони лідів з інформацією про passed/current статуси
+        lead_phones_students = {}
+        lead_phones_teachers = {}
+
+        try:
+            # Студенти: витягуємо телефони з AlfaCRM inference підходом
+            if student_campaigns and student_index:
+                lead_phones_students = _extract_lead_phones_with_status_students(
+                    campaigns_data=student_campaigns,
+                    student_index=student_index,
+                    analysis_date=datetime.now().strftime("%Y-%m-%d")
+                )
+                logger.info(f"Extracted phone data for {len(lead_phones_students)} student campaigns")
+        except Exception as e:
+            logger.error(f"Failed to extract student phone data: {e}")
+
+        try:
+            # Вчителі: витягуємо телефони з NetHunt real history
+            if teacher_campaigns and teacher_index and teacher_status_histories:
+                lead_phones_teachers = _extract_lead_phones_with_status_teachers(
+                    campaigns_data=teacher_campaigns,
+                    teacher_index=teacher_index,
+                    status_histories=teacher_status_histories,
+                    analysis_date=datetime.now().strftime("%Y-%m-%d")
+                )
+                logger.info(f"Extracted phone data for {len(lead_phones_teachers)} teacher campaigns")
+        except Exception as e:
+            logger.error(f"Failed to extract teacher phone data: {e}")
 
         return {
             "ads": ads_data,
             "students": students_data,
             "teachers": teachers_data,
+            "column_metadata": column_metadata,
+            "lead_phones": {
+                "students": lead_phones_students,
+                "teachers": lead_phones_teachers
+            },
             "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "period": f"{start_date} - {end_date}"
         }
@@ -819,11 +1045,389 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
         return JSONResponse({"error": f"Помилка отримання даних: {str(e)}"}, status_code=500)
 
 
+def _extract_lead_phones_with_status_students(
+    campaigns_data: Dict[str, Dict[str, Any]],
+    student_index: Dict[str, Dict[str, Any]],
+    analysis_date: str
+) -> Dict[str, Dict[str, List[Dict[str, str]]]]:
+    """
+    Витягує телефони студентів з інформацією про їх статус (passed/current).
+
+    Args:
+        campaigns_data: Дані кампаній з Meta leads API
+        student_index: Індекс студентів для матчингу
+        analysis_date: Дата аналізу для визначення passed/current
+
+    Returns:
+        {
+            "campaign_123": {
+                "Не розібраний": [
+                    {"phone": "+380...", "status": "passed"},
+                    {"phone": "+380...", "status": "current"}
+                ],
+                ...
+            }
+        }
+    """
+    from .services.alfacrm_tracking import extract_lead_contacts, normalize_contact
+    from .services.lead_journey_recovery import recover_lead_journey, ALFACRM_STATUS_NAMES
+
+    result = {}
+
+    for campaign_id, campaign_data in campaigns_data.items():
+        campaign_leads = campaign_data.get("leads", [])
+        if not campaign_leads:
+            continue
+
+        # Словник для зберігання лідів по статусах
+        status_phones = {}
+
+        for lead in campaign_leads:
+            phone, email = extract_lead_contacts(lead)
+            if not phone and not email:
+                continue
+
+            # Знаходимо студента в CRM
+            student = None
+            if phone and phone in student_index:
+                student = student_index[phone]
+            elif email and email in student_index:
+                student = student_index[email]
+
+            if not student:
+                # Лід не знайдено в CRM - вважаємо "Не розібраний" і current
+                status_name = "Не розібраний"
+                if status_name not in status_phones:
+                    status_phones[status_name] = []
+                status_phones[status_name].append({
+                    "phone": phone or email,
+                    "status": "current"
+                })
+                continue
+
+            # Визначаємо поточний статус студента
+            current_status_id = student.get("lead_status_id")
+            if not current_status_id:
+                continue
+
+            # Отримуємо journey - всі статуси через які пройшов лід
+            journey = recover_lead_journey(current_status_id)
+
+            # Останній статус в journey - поточний
+            current_status_name = ALFACRM_STATUS_NAMES.get(current_status_id)
+
+            # Додаємо телефон в КОЖЕН статус через який пройшов лід
+            for status_id in journey:
+                status_name = ALFACRM_STATUS_NAMES.get(status_id)
+                if not status_name:
+                    continue
+
+                if status_name not in status_phones:
+                    status_phones[status_name] = []
+
+                # Визначаємо passed або current
+                is_current = (status_id == current_status_id)
+
+                status_phones[status_name].append({
+                    "phone": phone or email,
+                    "status": "current" if is_current else "passed"
+                })
+
+        result[campaign_id] = status_phones
+
+    return result
+
+
+def _extract_lead_phones_with_status_teachers(
+    campaigns_data: Dict[str, Dict[str, Any]],
+    teacher_index: Dict[str, Dict[str, Any]],
+    status_histories: Dict[str, List[Dict[str, Any]]],
+    analysis_date: str
+) -> Dict[str, Dict[str, List[Dict[str, str]]]]:
+    """
+    Витягує телефони вчителів з інформацією про їх статус (passed/current).
+
+    Використовує РЕАЛЬНУ історію статусів з NetHunt API.
+
+    Args:
+        campaigns_data: Дані кампаній з Meta leads API
+        teacher_index: Індекс вчителів для матчингу
+        status_histories: Історії змін статусів з NetHunt
+        analysis_date: Дата аналізу для визначення passed/current
+
+    Returns:
+        {
+            "campaign_123": {
+                "Нові": [
+                    {"phone": "+380...", "status": "passed"},
+                    {"phone": "+380...", "status": "current"}
+                ],
+                ...
+            }
+        }
+    """
+    from .services.nethunt_tracking import extract_lead_contacts, map_nethunt_status_to_column
+
+    result = {}
+
+    for campaign_id, campaign_data in campaigns_data.items():
+        campaign_leads = campaign_data.get("leads", [])
+        if not campaign_leads:
+            continue
+
+        # Словник для зберігання лідів по статусах
+        status_phones = {}
+
+        for lead in campaign_leads:
+            phone, email = extract_lead_contacts(lead)
+            if not phone and not email:
+                continue
+
+            # Знаходимо вчителя в CRM
+            teacher_record = None
+            if phone and phone in teacher_index:
+                teacher_record = teacher_index[phone]
+            elif email and email in teacher_index:
+                teacher_record = teacher_index[email]
+
+            if not teacher_record:
+                # Лід не знайдено в CRM - вважаємо "Нові" і current
+                status_name = "Нові"
+                if status_name not in status_phones:
+                    status_phones[status_name] = []
+                status_phones[status_name].append({
+                    "phone": phone or email,
+                    "status": "current"
+                })
+                continue
+
+            # Отримуємо реальну історію статусів з NetHunt
+            record_id = teacher_record.get("id")
+            history = status_histories.get(record_id, [])
+
+            if not history:
+                # Якщо немає історії - використовуємо поточний статус
+                from .services.nethunt_tracking import extract_status_from_record
+                status_name = extract_status_from_record(teacher_record)
+                column_name = map_nethunt_status_to_column(status_name)
+
+                if column_name not in status_phones:
+                    status_phones[column_name] = []
+                status_phones[column_name].append({
+                    "phone": phone or email,
+                    "status": "current"
+                })
+                continue
+
+            # Визначаємо останній статус (поточний)
+            last_change = history[-1] if history else None
+            current_status = last_change.get("new_status", "").lower() if last_change else None
+            current_column = map_nethunt_status_to_column(current_status)
+
+            # Збираємо всі унікальні статуси через які пройшов лід
+            unique_statuses = set()
+            for change in history:
+                new_status = change.get("new_status", "").lower() if change.get("new_status") else None
+                if new_status:
+                    column_name = map_nethunt_status_to_column(new_status)
+                    unique_statuses.add(column_name)
+
+            # Додаємо телефон в КОЖЕН статус через який пройшов лід
+            for status_col in unique_statuses:
+                if status_col not in status_phones:
+                    status_phones[status_col] = []
+
+                # Визначаємо passed або current
+                is_current = (status_col == current_column)
+
+                status_phones[status_col].append({
+                    "phone": phone or email,
+                    "status": "current" if is_current else "passed"
+                })
+
+        result[campaign_id] = status_phones
+
+    return result
+
+
+def _get_column_metadata() -> Dict[str, Dict[str, str]]:
+    """
+    Генерує metadata для кольорової маркіровки стовпців в UI.
+
+    Returns:
+        {
+            "students": {"field_name": "meta|crm|formula", ...},
+            "teachers": {"field_name": "meta|crm|formula", ...},
+            "ads": {"field_name": "meta|crm|formula", ...}
+        }
+    """
+    # Загальні поля Meta для всіх вкладок
+    meta_fields = {
+        "campaign_name", "campaign_link", "campaign_id", "period", "budget",
+        "analysis_date", "location", "date_start", "date_stop", "date_update",
+        "ad_name", "creative_image", "creative_text", "image_url", "thumbnail_url",
+        "ctr", "cpm", "spend", "impressions", "clicks", "cpc"
+    }
+
+    # Студенти
+    students_crm = {
+        "not_processed", "contact_established", "in_progress",
+        "trial_scheduled", "trial_completed", "waiting_payment",
+        "purchased", "archive", "no_answer", "archive_non_target",
+        "leads_count", "leads_check"
+    }
+    students_formula = {
+        "target_leads", "non_target_leads", "percent_target", "percent_non_target",
+        "percent_contact", "percent_in_progress", "percent_conversion",
+        "percent_archive", "percent_no_answer", "price_per_lead",
+        "price_per_target_lead", "notes", "percent_trial_scheduled",
+        "percent_trial_completed", "percent_trial_conversion",
+        "conversion_trial_to_sale"
+    }
+
+    # Вчителі
+    teachers_crm = {
+        "new_leads", "contact_established", "qualified",
+        "interview_scheduled", "interview_completed", "offer_sent",
+        "hired", "rejected", "no_answer", "leads_count", "leads_check"
+    }
+    teachers_formula = {
+        "target_leads", "non_target_leads", "conversion_hired",
+        "conversion_qualified", "conversion_lead_to_interview",
+        "conversion_interview_to_hire", "percent_target", "percent_non_target",
+        "price_per_lead", "price_per_target_lead", "campaign_status"
+    }
+
+    # Реклама
+    ads_formula = {
+        "cpl", "leads_count", "leads_target", "leads_non_target",
+        "leads_no_answer", "leads_in_progress", "percent_target",
+        "percent_non_target", "percent_no_answer", "percent_in_progress",
+        "price_per_lead", "price_per_target_lead", "recommendation"
+    }
+
+    # Будуємо словники metadata для кожної вкладки
+    students_metadata = {}
+    for field in meta_fields:
+        students_metadata[field] = "meta"
+    for field in students_crm:
+        students_metadata[field] = "crm"
+    for field in students_formula:
+        students_metadata[field] = "formula"
+
+    teachers_metadata = {}
+    for field in meta_fields:
+        teachers_metadata[field] = "meta"
+    for field in teachers_crm:
+        teachers_metadata[field] = "crm"
+    for field in teachers_formula:
+        teachers_metadata[field] = "formula"
+
+    ads_metadata = {}
+    for field in meta_fields:
+        ads_metadata[field] = "meta"
+    for field in ads_formula:
+        ads_metadata[field] = "formula"
+
+    return {
+        "students": students_metadata,
+        "teachers": teachers_metadata,
+        "ads": ads_metadata
+    }
+
+
+def _apply_column_color_coding(ws, headers, data_type="students"):
+    """
+    Застосовує цветову маркіровку стовпців на основі їх типу.
+
+    Голубий (AddCDE) = Дані з Meta Ads
+    Розовий (FFB6C1) = Дані з CRM
+    Зелений (90EE90) = Формули та розрахунки
+
+    Args:
+        ws: Worksheet openpyxl
+        headers: Список заголовків стовпців
+        data_type: "students" | "teachers" | "ads"
+    """
+    from openpyxl.styles import PatternFill, Font, Alignment
+
+    # Визначаємо кольори
+    COLOR_META = "AddCDE"      # Голубий - дані з Meta
+    COLOR_CRM = "FFB6C1"       # Розовий - дані з CRM
+    COLOR_FORMULA = "90EE90"   # Зелений - формули та розрахунки
+
+    # Визначаємо які поля належать до якої категорії
+    meta_fields = {
+        "campaign_name", "campaign_link", "campaign_id", "period", "budget",
+        "analysis_date", "location", "date_start", "date_stop", "date_update",
+        "ad_name", "creative_image", "creative_text", "image_url", "thumbnail_url",
+        "ctr", "cpm", "spend", "impressions", "clicks", "cpc"
+    }
+
+    if data_type == "students":
+        crm_fields = {
+            "not_processed", "contact_established", "in_progress",
+            "trial_scheduled", "trial_completed", "waiting_payment",
+            "purchased", "archive", "no_answer", "archive_non_target",
+            "leads_count", "leads_check"
+        }
+        formula_fields = {
+            "target_leads", "non_target_leads", "percent_target", "percent_non_target",
+            "percent_contact", "percent_in_progress", "percent_conversion",
+            "percent_archive", "percent_no_answer", "price_per_lead",
+            "price_per_target_lead", "notes", "percent_trial_scheduled",
+            "percent_trial_completed", "percent_trial_conversion",
+            "conversion_trial_to_sale"
+        }
+    elif data_type == "teachers":
+        crm_fields = {
+            "new_leads", "contact_established", "qualified",
+            "interview_scheduled", "interview_completed", "offer_sent",
+            "hired", "rejected", "no_answer", "leads_count", "leads_check"
+        }
+        formula_fields = {
+            "target_leads", "non_target_leads", "conversion_hired",
+            "conversion_qualified", "conversion_lead_to_interview",
+            "conversion_interview_to_hire", "percent_target", "percent_non_target",
+            "price_per_lead", "price_per_target_lead", "campaign_status"
+        }
+    else:  # ads
+        crm_fields = set()
+        formula_fields = {
+            "cpl", "leads_count", "leads_target", "leads_non_target",
+            "leads_no_answer", "leads_in_progress", "percent_target",
+            "percent_non_target", "percent_no_answer", "percent_in_progress",
+            "price_per_lead", "price_per_target_lead", "recommendation"
+        }
+
+    # Застосовуємо кольори до заголовків
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx)
+
+        # Визначаємо колір на основі типу поля
+        if header in meta_fields:
+            fill_color = COLOR_META
+        elif header in crm_fields:
+            fill_color = COLOR_CRM
+        elif header in formula_fields:
+            fill_color = COLOR_FORMULA
+        else:
+            fill_color = "FFFFFF"  # Білий за замовчуванням
+
+        cell.font = Font(bold=True, color="000000")
+        cell.fill = PatternFill(start_color=fill_color, end_color=fill_color, fill_type="solid")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+
 @app.post("/api/export-meta-excel")
 @limiter.limit("10/minute")
 async def export_meta_excel(request: Request, payload: Dict[str, Any]):
     """
     Експорт даних з всіх 3 вкладок (Реклама, Студенти, Вчителі) в один Excel файл.
+    З цветовою маркіровкою стовпців:
+    - Голубий = Дані з Meta Ads
+    - Розовий = Дані з CRM
+    - Зелений = Формули та розрахунки
 
     Body:
         {
@@ -854,12 +1458,8 @@ async def export_meta_excel(request: Request, payload: Dict[str, Any]):
             ads_headers = list(ads_data[0].keys())
             ws_ads.append(ads_headers)
 
-            # Форматування заголовків
-            for col_idx, header in enumerate(ads_headers, 1):
-                cell = ws_ads.cell(row=1, column=col_idx)
-                cell.font = Font(bold=True, color="FFFFFF")
-                cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-                cell.alignment = Alignment(horizontal="center", vertical="center")
+            # Застосовуємо цветову маркіровку
+            _apply_column_color_coding(ws_ads, ads_headers, data_type="ads")
 
             # Дані
             for row_data in ads_data:
@@ -1366,6 +1966,45 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
                                     flat[k] = v
                     teachers.append(flat)
                 progress.log(job_id, f"Отримано викладачів з NetHunt: {len(teachers)}")
+
+                # Enrich teachers with funnel statistics from NetHunt journey tracking
+                try:
+                    progress.update(job_id, 35, "Обробка воронки статусів викладачів NetHunt")
+
+                    # Get Meta leads grouped by campaigns for teachers
+                    meta_page_id = os.getenv("META_PAGE_ID")
+                    meta_page_token = os.getenv("META_PAGE_ACCESS_TOKEN")
+
+                    if meta_page_id and meta_page_token:
+                        # Фільтруємо лідів тільки для кампаній вчителів
+                        keywords_teachers = os.getenv("CAMPAIGN_KEYWORDS_TEACHERS", "teacher,vchitel").lower().split(",")
+
+                        all_campaigns = await meta_leads.get_leads_for_period(
+                            page_id=meta_page_id,
+                            page_token=meta_page_token,
+                            start_date=params["start_date"],
+                            end_date=params["end_date"]
+                        )
+
+                        # Фільтруємо тільки кампанії вчителів
+                        teacher_campaigns = {
+                            cid: cdata for cid, cdata in all_campaigns.items()
+                            if any(kw.strip() in cdata.get("campaign_name", "").lower() for kw in keywords_teachers)
+                        }
+
+                        progress.log(job_id, f"Отримано {len(teacher_campaigns)} кампаній вчителів з {sum(len(c['leads']) for c in teacher_campaigns.values())} лідів")
+
+                        # Трекінг через NetHunt з реальною історією
+                        enriched_campaigns = await nethunt_tracking.track_leads_by_campaigns(
+                            campaigns_data=teacher_campaigns,
+                            folder_id=nh_folder
+                        )
+                        progress.log(job_id, f"Обраховано воронку для {len(enriched_campaigns)} кампаній викладачів")
+                    else:
+                        progress.log(job_id, "META_PAGE_ID або META_PAGE_ACCESS_TOKEN не налаштовані - пропускаємо трекінг викладачів")
+
+                except Exception as e:
+                    progress.log(job_id, f"Попередження: не вдалося обрахувати воронку викладачів: {e}")
             except Exception as e:
                 progress.log(job_id, f"Помилка отримання з NetHunt: {e}")
         else:
@@ -1402,6 +2041,45 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
                         break
                     page += 1
                 progress.log(job_id, f"Отримано студентів з AlfaCRM: {len(students)}")
+
+                # Enrich students with funnel statistics from AlfaCRM tracking
+                try:
+                    progress.update(job_id, 40, "Обробка воронки статусів студентів AlfaCRM")
+
+                    # Get Meta leads grouped by campaigns for students
+                    meta_page_id = os.getenv("META_PAGE_ID")
+                    meta_page_token = os.getenv("META_PAGE_ACCESS_TOKEN")
+
+                    if meta_page_id and meta_page_token:
+                        # Фільтруємо лідів тільки для кампаній студентів
+                        keywords_students = os.getenv("CAMPAIGN_KEYWORDS_STUDENTS", "student,shkolnik").lower().split(",")
+
+                        all_campaigns = await meta_leads.get_leads_for_period(
+                            page_id=meta_page_id,
+                            page_token=meta_page_token,
+                            start_date=params["start_date"],
+                            end_date=params["end_date"]
+                        )
+
+                        # Фільтруємо тільки кампанії студентів
+                        student_campaigns = {
+                            cid: cdata for cid, cdata in all_campaigns.items()
+                            if any(kw.strip() in cdata.get("campaign_name", "").lower() for kw in keywords_students)
+                        }
+
+                        progress.log(job_id, f"Отримано {len(student_campaigns)} кампаній студентів з {sum(len(c['leads']) for c in student_campaigns.values())} лідів")
+
+                        # Трекінг через AlfaCRM з inference підходом
+                        enriched_campaigns = await alfacrm_tracking.track_leads_by_campaigns(
+                            campaigns_data=student_campaigns,
+                            page_size=500
+                        )
+                        progress.log(job_id, f"Обраховано воронку для {len(enriched_campaigns)} кампаній студентів")
+                    else:
+                        progress.log(job_id, "META_PAGE_ID або META_PAGE_ACCESS_TOKEN не налаштовані - пропускаємо трекінг студентів")
+
+                except Exception as e:
+                    progress.log(job_id, f"Попередження: не вдалося обрахувати воронку студентів: {e}")
             except Exception as e:
                 progress.log(job_id, f"Помилка отримання з AlfaCRM: {e}")
         else:

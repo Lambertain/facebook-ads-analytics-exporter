@@ -3,6 +3,9 @@ AlfaCRM Lead Tracking Service
 
 Трекинг прогресса лидов из Meta Ads через статусы AlfaCRM.
 Подсчет количества лидов на каждом этапе воронки для студентов.
+
+ПОДХОД: Inference - восстановление пути из текущего статуса.
+Использует lead_journey_recovery.py для определения всех статусов через которые прошел лид.
 """
 import os
 import logging
@@ -14,6 +17,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from connectors.crm import alfacrm_list_students
+from services.lead_journey_recovery import recover_lead_journey, ALFACRM_STATUS_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -209,13 +213,20 @@ def track_campaign_leads(
             # Получаем текущий статус студента
             lead_status_id = student.get("lead_status_id")
 
-            if lead_status_id in ALFACRM_STATUS_MAPPING:
-                status_name = ALFACRM_STATUS_MAPPING[lead_status_id]
-                status_counts[status_name] += 1
+            if lead_status_id:
+                # INFERENCE ПОДХОД: Восстанавливаем путь лида через воронку
+                # на основе текущего статуса
+                journey = recover_lead_journey(lead_status_id)
 
-            # ВАЖНО: Если лид прошел несколько статусов, нужно +1 в каждом
-            # Для этого нужна история статусов, которой пока нет в AlfaCRM API
-            # Пока считаем только текущий статус
+                # Засчитываем лида в КАЖДОМ статусе через который он прошел
+                # Это создает КУМУЛЯТИВНУЮ воронку как в NetHunt
+                for status_id in journey:
+                    status_name = ALFACRM_STATUS_NAMES.get(status_id)
+                    if status_name and status_name in status_counts:
+                        status_counts[status_name] += 1
+            else:
+                # Если нет lead_status_id - считаем как необработанный
+                status_counts["Не розібраний"] += 1
 
         else:
             not_found_count += 1
