@@ -47,6 +47,11 @@ def normalize_contact(contact: Optional[str]) -> Optional[str]:
     """
     Нормализовать контакт (телефон или email) для поиска.
 
+    Для телефонов использует умную нормализацию:
+    - Убирает все кроме цифр
+    - Приводит украинские номера к единому формату с кодом страны 380
+    - Возвращает последние 12 цифр (380 + 9 цифр номера)
+
     Args:
         contact: Телефон или email
 
@@ -63,7 +68,33 @@ def normalize_contact(contact: Optional[str]) -> Optional[str]:
         return contact.lower()
 
     # Если это телефон - убираем все кроме цифр
-    return ''.join(c for c in contact if c.isdigit())
+    digits = ''.join(c for c in contact if c.isdigit())
+
+    if not digits:
+        return None
+
+    # Умная нормализация украинских номеров
+    # Варианты: 380501234567, 0501234567, 501234567
+
+    # Если номер начинается с 380 (код Украины)
+    if digits.startswith('380'):
+        # Берем 380 + 9 цифр (стандартный формат)
+        if len(digits) >= 12:
+            return digits[:12]  # 380501234567
+        return digits
+
+    # Если номер начинается с 0 (местный формат)
+    elif digits.startswith('0') and len(digits) == 10:
+        # Конвертируем 0501234567 → 380501234567
+        return '380' + digits[1:]
+
+    # Если номер без кода страны и без 0 (9 цифр)
+    elif len(digits) == 9:
+        # Конвертируем 501234567 → 380501234567
+        return '380' + digits
+
+    # Если длина нестандартная - возвращаем как есть
+    return digits
 
 
 def extract_lead_contacts(lead: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
@@ -421,6 +452,32 @@ def build_teacher_index(records: List[Dict[str, Any]]) -> Dict[str, Dict[str, An
     return index
 
 
+def extract_contacts_from_campaigns(campaigns_data: Dict[str, Dict[str, Any]]) -> set:
+    """
+    Извлечь все уникальные контакты (телефоны и email) из лидов кампаний.
+
+    Args:
+        campaigns_data: Данные от get_leads_for_period() из meta_leads.py
+
+    Returns:
+        Множество нормализованных контактов
+    """
+    contacts = set()
+
+    for campaign_data in campaigns_data.values():
+        leads = campaign_data.get("leads", [])
+
+        for lead in leads:
+            phone, email = extract_lead_contacts(lead)
+            if phone:
+                contacts.add(phone)
+            if email:
+                contacts.add(email)
+
+    logger.info(f"Extracted {len(contacts)} unique contacts from {sum(len(c.get('leads', [])) for c in campaigns_data.values())} leads")
+    return contacts
+
+
 def track_campaign_leads(
     campaign_leads: List[Dict[str, Any]],
     teacher_index: Dict[str, Dict[str, Any]],
@@ -532,6 +589,8 @@ async def track_leads_by_campaigns(
     """
     Обогатить данные кампаний статистикой по воронке из NetHunt.
 
+    ОПТИМИЗАЦИЯ: Загружает только тех учителей, которые есть в лидах кампаний за период.
+
     Args:
         campaigns_data: Данные от get_leads_for_period() из meta_leads.py
             {
@@ -558,7 +617,14 @@ async def track_leads_by_campaigns(
             }
         }
     """
-    # 1. Определить folder_id
+    # 1. Извлечь контакты из лидов Meta за указанный период
+    lead_contacts = extract_contacts_from_campaigns(campaigns_data)
+
+    if not lead_contacts:
+        logger.warning("No contacts found in Meta leads - skipping NetHunt loading")
+        return {}
+
+    # 2. Определить folder_id
     if not folder_id:
         folder_id = os.getenv("NETHUNT_FOLDER_ID")
 
@@ -576,7 +642,7 @@ async def track_leads_by_campaigns(
             logger.error(f"Failed to get NetHunt folders: {e}")
             return {}
 
-    # 2. Загрузить ИСТОРИЮ изменений записей из NetHunt
+    # 3. Загрузить ИСТОРИЮ изменений записей из NetHunt
     logger.info(f"Loading record change history from NetHunt folder {folder_id}...")
 
     # Опциональная фильтрация: загрузить изменения только за последние 90 дней
@@ -597,7 +663,7 @@ async def track_leads_by_campaigns(
     if not all_changes:
         logger.warning("No record changes found, falling back to current status only")
 
-    # 3. Построить истории статусов для каждой записи
+    # 4. Построить истории статусов для каждой записи
     record_ids = set(change.get("recordId") for change in all_changes if change.get("recordId"))
     status_histories = {}
 
@@ -608,7 +674,7 @@ async def track_leads_by_campaigns(
 
     logger.info(f"Built status history for {len(status_histories)} teachers")
 
-    # 4. Загрузить текущие записи учителей для индексации по контактам
+    # 5. Загрузить текущие записи учителей для индексации по контактам
     logger.info(f"Loading current teacher records from NetHunt folder {folder_id}...")
 
     try:
@@ -618,11 +684,18 @@ async def track_leads_by_campaigns(
         logger.error(f"Failed to load NetHunt records: {e}")
         return {}
 
-    # 5. Построить индекс учителей
+    # 6. Построить индекс учителей
     teacher_index = build_teacher_index(all_records)
-    logger.info(f"Built teacher index with {len(teacher_index)} contact entries")
 
-    # 6. Собрать все уникальные статусы для создания столбцов
+    # Фильтруем индекс - оставляем только контакты которые есть в лидах
+    filtered_index = {
+        contact: teacher for contact, teacher in teacher_index.items()
+        if contact in lead_contacts
+    }
+
+    logger.info(f"Filtered teacher index: {len(filtered_index)} matched contacts from {len(teacher_index)} total")
+
+    # 7. Собрать все уникальные статусы для создания столбцов
     all_status_columns = set(NETHUNT_STATUS_MAPPING.values())
 
     # Добавить реальные статусы из истории
@@ -642,16 +715,16 @@ async def track_leads_by_campaigns(
 
     logger.info(f"Found {len(all_status_columns)} unique status columns")
 
-    # 7. Обработать каждую кампанию
+    # 8. Обработать каждую кампанию
     enriched_campaigns = {}
 
     for campaign_id, campaign_data in campaigns_data.items():
         campaign_leads = campaign_data.get("leads", [])
 
-        # Подсчитать статусы для этой кампании ИСПОЛЬЗУЯ ИСТОРИЮ
+        # Подсчитать статусы для этой кампании ИСПОЛЬЗУЯ отфильтрованный индекс
         funnel_stats = track_campaign_leads(
             campaign_leads,
-            teacher_index,
+            filtered_index,
             status_histories,
             all_status_columns
         )

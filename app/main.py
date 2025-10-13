@@ -728,31 +728,8 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
                     if any(kw.strip() in cdata.get("campaign_name", "").lower() for kw in keywords_students)
                 }
 
-                # Завантажуємо всіх студентів з AlfaCRM для створення індексу
-                from connectors.crm import alfacrm_list_students
-                all_students = []
-                page = 1
-                while True:
-                    try:
-                        response = alfacrm_list_students(page=page, page_size=500)
-                        students = response.get("items", [])
-                        if not students:
-                            break
-                        all_students.extend(students)
-                        total = response.get("total", 0)
-                        if len(all_students) >= total:
-                            break
-                        page += 1
-                    except Exception as e:
-                        logger.error(f"Failed to load students page {page}: {e}")
-                        break
-
-                # Будуємо індекс студентів
-                from services.alfacrm_tracking import build_student_index
-                student_index = build_student_index(all_students)
-                logger.info(f"Built student index with {len(student_index)} contact entries")
-
                 # Трекінг через AlfaCRM з inference підходом
+                # Функція сама завантажить студентів і відфільтрує тільки релевантних
                 students_tracking = await alfacrm_tracking.track_leads_by_campaigns(
                     campaigns_data=student_campaigns,
                     page_size=500

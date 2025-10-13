@@ -71,6 +71,11 @@ def normalize_contact(contact: Optional[str]) -> Optional[str]:
     """
     Нормализовать контакт (телефон или email) для поиска.
 
+    Для телефонов использует умную нормализацию:
+    - Убирает все кроме цифр
+    - Приводит украинские номера к единому формату с кодом страны 380
+    - Возвращает последние 12 цифр (380 + 9 цифр номера)
+
     Args:
         contact: Телефон или email
 
@@ -87,15 +92,42 @@ def normalize_contact(contact: Optional[str]) -> Optional[str]:
         return contact.lower()
 
     # Если это телефон - убираем все кроме цифр
-    return ''.join(c for c in contact if c.isdigit())
+    digits = ''.join(c for c in contact if c.isdigit())
+
+    if not digits:
+        return None
+
+    # Умная нормализация украинских номеров
+    # Варианты: 380501234567, 0501234567, 501234567
+
+    # Если номер начинается с 380 (код Украины)
+    if digits.startswith('380'):
+        # Берем 380 + 9 цифр (стандартный формат)
+        if len(digits) >= 12:
+            return digits[:12]  # 380501234567
+        return digits
+
+    # Если номер начинается с 0 (местный формат)
+    elif digits.startswith('0') and len(digits) == 10:
+        # Конвертируем 0501234567 → 380501234567
+        return '380' + digits[1:]
+
+    # Если номер без кода страны и без 0 (9 цифр)
+    elif len(digits) == 9:
+        # Конвертируем 501234567 → 380501234567
+        return '380' + digits
+
+    # Если длина нестандартная - возвращаем как есть
+    return digits
 
 
-def extract_lead_contacts(lead: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+def extract_lead_contacts(lead: Dict[str, Any], debug: bool = False) -> tuple[Optional[str], Optional[str]]:
     """
     Извлечь телефон и email из field_data лида.
 
     Args:
         lead: Лид из Meta API с field_data
+        debug: Включить отладочное логирование
 
     Returns:
         (phone, email) tuple
@@ -104,36 +136,50 @@ def extract_lead_contacts(lead: Dict[str, Any]) -> tuple[Optional[str], Optional
     phone = None
     email = None
 
+    if debug and field_data:
+        logger.info(f"[DEBUG] Lead ID: {lead.get('id')}, field_data: {field_data}")
+
     for field in field_data:
         field_name = field.get("name", "").lower()
         values = field.get("values", [])
         value = values[0] if values else None
+
+        if debug:
+            logger.info(f"[DEBUG] field_name: '{field_name}', value: '{value}'")
 
         if not value:
             continue
 
         # Поиск телефона
         if any(keyword in field_name for keyword in ["phone", "телефон", "number"]):
+            raw_phone = value
             phone = normalize_contact(value)
+            if debug:
+                logger.info(f"[DEBUG] Found phone - raw: '{raw_phone}' -> normalized: '{phone}'")
 
         # Поиск email
         elif any(keyword in field_name for keyword in ["email", "e-mail", "адрес", "почта"]):
+            raw_email = value
             email = normalize_contact(value)
+            if debug:
+                logger.info(f"[DEBUG] Found email - raw: '{raw_email}' -> normalized: '{email}'")
 
     return phone, email
 
 
-def build_student_index(students: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def build_student_index(students: List[Dict[str, Any]], debug: bool = False) -> Dict[str, Dict[str, Any]]:
     """
     Создать индекс студентов по телефону и email для быстрого поиска.
 
     Args:
         students: Список студентов из AlfaCRM
+        debug: Включить отладочное логирование
 
     Returns:
         Словарь {normalized_contact: student_data}
     """
     index = {}
+    debug_samples = 0
 
     for student in students:
         # Индексируем по телефонам (массив)
@@ -141,27 +187,45 @@ def build_student_index(students: List[Dict[str, Any]]) -> Dict[str, Dict[str, A
         if isinstance(phones, str):
             phones = [phones]
 
+        if debug and debug_samples < 3 and phones:
+            logger.info(f"[DEBUG] Student ID: {student.get('id')}, raw phones: {phones}")
+
         for phone in phones:
+            raw = phone
             normalized = normalize_contact(phone)
             if normalized:
                 index[normalized] = student
+                if debug and debug_samples < 3:
+                    logger.info(f"[DEBUG] Phone - raw: '{raw}' -> normalized: '{normalized}'")
 
         # Индексируем по email (массив)
         emails = student.get("email", [])
         if isinstance(emails, str):
             emails = [emails]
 
+        if debug and debug_samples < 3 and emails:
+            logger.info(f"[DEBUG] Student ID: {student.get('id')}, raw emails: {emails}")
+
         for email in emails:
+            raw = email
             normalized = normalize_contact(email)
             if normalized:
                 index[normalized] = student
+                if debug and debug_samples < 3:
+                    logger.info(f"[DEBUG] Email - raw: '{raw}' -> normalized: '{normalized}'")
 
         # Также индексируем по custom_email если есть
         custom_email = student.get("custom_email")
         if custom_email:
+            raw = custom_email
             normalized = normalize_contact(custom_email)
             if normalized:
                 index[normalized] = student
+                if debug and debug_samples < 3:
+                    logger.info(f"[DEBUG] Custom email - raw: '{raw}' -> normalized: '{normalized}'")
+
+        if debug and (phones or emails or custom_email):
+            debug_samples += 1
 
     return index
 
@@ -240,12 +304,50 @@ def track_campaign_leads(
     return status_counts
 
 
+def extract_contacts_from_campaigns(campaigns_data: Dict[str, Dict[str, Any]], debug: bool = False) -> set:
+    """
+    Извлечь все уникальные контакты (телефоны и email) из лидов кампаний.
+
+    Args:
+        campaigns_data: Данные от get_leads_for_period() из meta_leads.py
+        debug: Включить отладочное логирование
+
+    Returns:
+        Множество нормализованных контактов
+    """
+    contacts = set()
+    debug_samples = 0
+
+    for campaign_data in campaigns_data.values():
+        leads = campaign_data.get("leads", [])
+
+        for lead in leads:
+            phone, email = extract_lead_contacts(lead, debug=(debug and debug_samples < 3))
+            if phone:
+                contacts.add(phone)
+            if email:
+                contacts.add(email)
+
+            if debug and (phone or email):
+                debug_samples += 1
+
+    logger.info(f"Extracted {len(contacts)} unique contacts from {sum(len(c.get('leads', [])) for c in campaigns_data.values())} leads")
+
+    if debug:
+        sample_contacts = list(contacts)[:5]
+        logger.info(f"[DEBUG] Sample extracted contacts: {sample_contacts}")
+
+    return contacts
+
+
 async def track_leads_by_campaigns(
     campaigns_data: Dict[str, Dict[str, Any]],
     page_size: int = 500
 ) -> Dict[str, Dict[str, Any]]:
     """
     Обогатить данные кампаний статистикой по воронке из AlfaCRM.
+
+    ОПТИМИЗАЦИЯ: Загружает только тех студентов, которые есть в лидах кампаний за период.
 
     Args:
         campaigns_data: Данные от get_leads_for_period() из meta_leads.py
@@ -273,7 +375,19 @@ async def track_leads_by_campaigns(
             }
         }
     """
-    # 1. Загрузить всех студентов из AlfaCRM
+    # ВРЕМЕННО: Включаем DEBUG режим для диагностики
+    DEBUG_MODE = True
+
+    # 1. Извлечь контакты из лидов Meta за указанный период
+    lead_contacts = extract_contacts_from_campaigns(campaigns_data, debug=DEBUG_MODE)
+
+    if not lead_contacts:
+        logger.warning("No contacts found in Meta leads - skipping AlfaCRM loading")
+        return {}
+
+    # 2. Загрузить ВСЕХ студентов из AlfaCRM (требуется для сопоставления)
+    # Примечание: AlfaCRM API не поддерживает фильтрацию по телефону/email
+    # поэтому мы загружаем всех студентов но затем используем только релевантных
     logger.info("Loading students from AlfaCRM...")
 
     all_students = []
@@ -302,18 +416,32 @@ async def track_leads_by_campaigns(
 
     logger.info(f"Loaded {len(all_students)} students from AlfaCRM")
 
-    # 2. Построить индекс студентов
-    student_index = build_student_index(all_students)
-    logger.info(f"Built student index with {len(student_index)} contact entries")
+    # 3. Построить индекс ТОЛЬКО для студентов с контактами из лидов
+    student_index = build_student_index(all_students, debug=DEBUG_MODE)
 
-    # 3. Обработать каждую кампанию
+    # Фильтруем индекс - оставляем только контакты которые есть в лидах
+    filtered_index = {
+        contact: student for contact, student in student_index.items()
+        if contact in lead_contacts
+    }
+
+    logger.info(f"Filtered student index: {len(filtered_index)} matched contacts from {len(student_index)} total")
+
+    if DEBUG_MODE and len(filtered_index) == 0:
+        # Если нет совпадений - показываем примеры для анализа
+        sample_lead_contacts = list(lead_contacts)[:5]
+        sample_index_contacts = list(student_index.keys())[:5]
+        logger.info(f"[DEBUG] Sample lead contacts: {sample_lead_contacts}")
+        logger.info(f"[DEBUG] Sample index contacts: {sample_index_contacts}")
+
+    # 4. Обработать каждую кампанию
     enriched_campaigns = {}
 
     for campaign_id, campaign_data in campaigns_data.items():
         campaign_leads = campaign_data.get("leads", [])
 
-        # Подсчитать статусы для этой кампании
-        funnel_stats = track_campaign_leads(campaign_leads, student_index)
+        # Подсчитать статусы для этой кампании используя отфильтрованный индекс
+        funnel_stats = track_campaign_leads(campaign_leads, filtered_index)
 
         enriched_campaigns[campaign_id] = {
             "campaign_id": campaign_data.get("campaign_id"),
