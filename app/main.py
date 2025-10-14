@@ -666,12 +666,77 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
                 if len(insights) > 0 and insight == insights[0]:
                     logger.info(f"DEBUG first creative: ad_id={ad_id}, image_url={creative_data.get('image_url')}, thumbnail={creative_data.get('thumbnail_url')}")
 
-        # 4) Формируем данные для вкладки РЕКЛАМА
+        # 4) Формируем данные для вкладки РЕКЛАМА з інтеграцією AlfaCRM tracking
         ads_data = []
+
+        # Получаем tracking данные для всех кампаний
+        ads_tracking = {}
+        try:
+            meta_page_id = os.getenv("META_PAGE_ID")
+            meta_page_token = os.getenv("META_PAGE_ACCESS_TOKEN")
+
+            if meta_page_id and meta_page_token:
+                all_campaigns_ads = await meta_leads.get_leads_for_period(
+                    page_id=meta_page_id,
+                    page_token=meta_page_token,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+
+                # Трекинг через AlfaCRM для расчета метрик по лидам
+                ads_tracking = await alfacrm_tracking.track_leads_by_campaigns(
+                    campaigns_data=all_campaigns_ads,
+                    page_size=500
+                )
+                logger.info(f"Loaded ads tracking for {len(ads_tracking)} campaigns")
+            else:
+                logger.warning("META_PAGE_ID або META_PAGE_ACCESS_TOKEN не налаштовані")
+        except Exception as e:
+            logger.error(f"Failed to load ads tracking: {e}")
+
         for insight in insights:
+            campaign_id = insight.get("campaign_id", "")
+
+            # Получаем статистику воронки для кампании
+            campaign_tracking = ads_tracking.get(f"campaign_{campaign_id}", {})
+            funnel_stats = campaign_tracking.get("funnel_stats", {})
+
+            # Базовые показатели
+            leads_count = funnel_stats.get("Кількість лідів", 0)
+            spend = insight.get("spend", 0)
+
+            # Целевые/нецелевые лиды (по аналогии со students_data)
+            contact_established = funnel_stats.get("Вст контакт зацікавлений", 0)
+            not_processed = funnel_stats.get("Не розібраний", 0)
+
+            # Недозвоны (все варианты из обеих воронок)
+            no_answer = (
+                funnel_stats.get("Недодзвон", 0) +
+                funnel_stats.get("Недозвон 2", 0) +
+                funnel_stats.get("Недозвон 3", 0) +
+                funnel_stats.get("Недозвон", 0) +
+                funnel_stats.get("недозвон 3", 0)
+            )
+
+            # Целевые/нецелевые
+            target_leads = contact_established
+            non_target_leads = not_processed + no_answer
+            in_progress = funnel_stats.get("Розмовляли, чекаємо відповідь", 0)
+
+            # Расчет процентов
+            percent_target = round((target_leads / leads_count * 100), 2) if leads_count > 0 else 0
+            percent_non_target = round((non_target_leads / leads_count * 100), 2) if leads_count > 0 else 0
+            percent_no_answer = round((no_answer / leads_count * 100), 2) if leads_count > 0 else 0
+            percent_in_progress = round((in_progress / leads_count * 100), 2) if leads_count > 0 else 0
+
+            # CPL (Cost Per Lead) и Price Per Lead
+            cpl = round((spend / leads_count), 2) if leads_count > 0 else 0
+            price_per_lead = cpl  # Дублирование согласно требованиям
+            price_per_target_lead = round((spend / target_leads), 2) if target_leads > 0 else 0
+
             ads_data.append({
                 "campaign_name": insight.get("campaign_name", ""),
-                "campaign_id": insight.get("campaign_id", ""),
+                "campaign_id": campaign_id,
                 "period": f"{insight.get('date_start', '')} - {insight.get('date_stop', '')}",
                 "date_start": insight.get("date_start", ""),
                 "date_stop": insight.get("date_stop", ""),
@@ -682,20 +747,20 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
                 "image_url": insight.get("image_url", ""),
                 "thumbnail_url": insight.get("thumbnail_url", ""),
                 "ctr": insight.get("ctr", 0),
-                "cpl": "треба API",  # Cost per lead - требует leads API
+                "cpl": cpl,
                 "cpm": insight.get("cpm", 0),
-                "spend": insight.get("spend", 0),
-                "leads_count": "треба API",
-                "leads_target": "треба API",
-                "leads_non_target": "треба API",
-                "leads_no_answer": "треба API",
-                "leads_in_progress": "треба API",
-                "percent_target": "треба API",
-                "percent_non_target": "треба API",
-                "percent_no_answer": "треба API",
-                "percent_in_progress": "треба API",
-                "price_per_lead": "треба API",
-                "price_per_target_lead": "треба API",
+                "spend": spend,
+                "leads_count": leads_count,
+                "leads_target": target_leads,
+                "leads_non_target": non_target_leads,
+                "leads_no_answer": no_answer,
+                "leads_in_progress": in_progress,
+                "percent_target": percent_target,
+                "percent_non_target": percent_non_target,
+                "percent_no_answer": percent_no_answer,
+                "percent_in_progress": percent_in_progress,
+                "price_per_lead": price_per_lead,
+                "price_per_target_lead": price_per_target_lead,
                 "recommendation": ""
             })
 
@@ -1021,7 +1086,8 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
                 price_per_lead = round((budget / leads_count), 2) if leads_count > 0 else 0
                 price_per_target_lead = round((budget / target_leads), 2) if target_leads > 0 else 0
 
-                teachers_data.append({
+                # Формуємо базовий словник з Meta даними та розрахунками
+                teacher_record = {
                     "campaign_name": insight.get("campaign_name", ""),
                     "campaign_link": f"https://facebook.com/ads/manager/campaigns/edit/{campaign_id}",
                     "analysis_date": datetime.now().strftime("%Y-%m-%d"),
@@ -1050,7 +1116,18 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
                     "price_per_lead": price_per_lead,
                     "price_per_target_lead": price_per_target_lead,
                     "campaign_status": "active"  # Можна додати логіку визначення статусу
-                })
+                }
+
+                # КРИТИЧНО ВАЖЛИВО: Додаємо ВСІ NetHunt статуси з funnel_stats
+                # Це дозволяє frontend відобразити повну journey вчителя через всі статуси
+                # Статуси динамічно виявляються з реальних даних NetHunt API (не фіксований список)
+                for status_name, status_count in funnel_stats.items():
+                    # Перетворюємо назву статусу на ключ для словника
+                    # Наприклад: "Контакт встановлено" → "status_contact_established"
+                    # Зберігаємо оригінальну назву як є, frontend буде використовувати її як динамічний ключ
+                    teacher_record[status_name] = status_count
+
+                teachers_data.append(teacher_record)
 
         # Додаємо metadata для кольорової маркіровки стовпців в UI
         column_metadata = _get_column_metadata()

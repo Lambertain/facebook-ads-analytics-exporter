@@ -474,10 +474,10 @@ export default function App() {
                               {row.campaign_name || row.campaign_id || "Без назви"}
                             </Link>
                           </TableCell>
+                          <TableCell>{row.period || '-'}</TableCell>
                           <TableCell>-</TableCell>
                           <TableCell>-</TableCell>
-                          <TableCell>-</TableCell>
-                          <TableCell>-</TableCell>
+                          <TableCell>{row.date_update || '-'}</TableCell>
                           <TableCell>{row.ad_name || '-'}</TableCell>
                           <TableCell>
                             {row.creative_image || row.image_url ? (
@@ -486,21 +486,21 @@ export default function App() {
                           </TableCell>
                           <TableCell>{row.creative_text || row.creative_body || '-'}</TableCell>
                           <TableCell>{row.ctr || 0}</TableCell>
-                          <TableCell>-</TableCell>
+                          <TableCell>{row.cpl || 0}</TableCell>
                           <TableCell>{row.cpm || 0}</TableCell>
                           <TableCell>{row.spend || 0}</TableCell>
-                          <TableCell>{row.leads_count}</TableCell>
-                          <TableCell>{row.target_leads_count}</TableCell>
-                          <TableCell>{row.non_target_leads_count}</TableCell>
-                          <TableCell>{row.not_reached}</TableCell>
-                          <TableCell>{row.in_progress}</TableCell>
-                          <TableCell>{row.target_leads_percent}</TableCell>
-                          <TableCell>{row.non_target_leads_percent}</TableCell>
-                          <TableCell>-</TableCell>
-                          <TableCell>{row.in_progress_percent}</TableCell>
-                          <TableCell>-</TableCell>
-                          <TableCell>-</TableCell>
-                          <TableCell>-</TableCell>
+                          <TableCell>{row.leads_count || 0}</TableCell>
+                          <TableCell>{row.leads_target || 0}</TableCell>
+                          <TableCell>{row.leads_non_target || 0}</TableCell>
+                          <TableCell>{row.leads_no_answer || 0}</TableCell>
+                          <TableCell>{row.leads_in_progress || 0}</TableCell>
+                          <TableCell>{row.percent_target || 0}</TableCell>
+                          <TableCell>{row.percent_non_target || 0}</TableCell>
+                          <TableCell>{row.percent_no_answer || 0}</TableCell>
+                          <TableCell>{row.percent_in_progress || 0}</TableCell>
+                          <TableCell>{row.price_per_lead || 0}</TableCell>
+                          <TableCell>{row.price_per_target_lead || 0}</TableCell>
+                          <TableCell>{row.recommendation || '-'}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
