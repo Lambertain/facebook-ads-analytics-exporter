@@ -475,8 +475,8 @@ export default function App() {
                             </Link>
                           </TableCell>
                           <TableCell>{row.period || '-'}</TableCell>
-                          <TableCell>-</TableCell>
-                          <TableCell>-</TableCell>
+                          <TableCell>{row.first_analysis_date || '-'}</TableCell>
+                          <TableCell>{row.last_analysis_date || '-'}</TableCell>
                           <TableCell>{row.date_update || '-'}</TableCell>
                           <TableCell>{row.ad_name || '-'}</TableCell>
                           <TableCell>

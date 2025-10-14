@@ -63,3 +63,24 @@ class RunLog(Base):
 
     def __repr__(self):
         return f"<RunLog(id={self.id}, run_id={self.run_id}, level={self.level})>"
+
+
+class CampaignAnalysisHistory(Base):
+    """Model for tracking campaign analysis history for date tracking."""
+
+    __tablename__ = "campaign_analysis_history"
+    __table_args__ = (
+        {'sqlite_autoincrement': True}
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    campaign_id = Column(String(50), nullable=False, index=True)
+    period = Column(String(50), nullable=False, index=True)  # "2025-01-01 - 2025-01-31"
+    first_analysis_date = Column(String(10), nullable=False)  # YYYY-MM-DD
+    last_analysis_date = Column(String(10), nullable=True)  # YYYY-MM-DD або NULL
+    analysis_count = Column(Integer, default=1, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<CampaignAnalysisHistory(campaign_id={self.campaign_id}, period={self.period}, count={self.analysis_count})>"

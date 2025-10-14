@@ -34,11 +34,12 @@ from .config_store import get_config_masked, set_config
 from .connectors import crm as crm_conn
 from .middleware.auth import verify_api_key
 from .database import init_db, get_db
-from .models import PipelineRun, RunLog
+from .models import PipelineRun, RunLog, CampaignAnalysisHistory
 from .analytics_processor import AnalyticsProcessor
 from .services import nethunt_tracking
 from .services import alfacrm_tracking
 from .services import meta_leads
+from sqlalchemy.orm import Session
 
 
 load_dotenv()
@@ -98,6 +99,65 @@ progress = ProgressStore()
 # Define paths for static files
 WEB_DIST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "dist")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+
+
+def get_or_create_analysis_record(db: Session, campaign_id: str, period: str) -> Dict[str, str]:
+    """
+    Отримати або створити запис історії аналізу кампанії з правильним відстеженням дат.
+
+    Логіка:
+    - Перший аналіз: first_analysis_date = сьогодні, last_analysis_date = None
+    - Повторний аналіз: first_analysis_date = залишаємо стару, last_analysis_date = сьогодні
+
+    Args:
+        db: SQLAlchemy session
+        campaign_id: ID кампанії з Facebook
+        period: Період аналізу у форматі "YYYY-MM-DD - YYYY-MM-DD"
+
+    Returns:
+        dict з ключами:
+            - first_analysis_date: дата першого аналізу (YYYY-MM-DD)
+            - last_analysis_date: дата останнього аналізу (YYYY-MM-DD) або "-"
+    """
+    current_date = datetime.now().strftime("%Y-%m-%d")
+
+    # Шукаємо існуючий запис
+    record = db.query(CampaignAnalysisHistory).filter_by(
+        campaign_id=campaign_id,
+        period=period
+    ).first()
+
+    if not record:
+        # Перший аналіз для цієї кампанії + періоду
+        record = CampaignAnalysisHistory(
+            campaign_id=campaign_id,
+            period=period,
+            first_analysis_date=current_date,
+            last_analysis_date=None,
+            analysis_count=1
+        )
+        db.add(record)
+        db.commit()
+
+        logger.info(f"Created first analysis record: campaign={campaign_id}, period={period}, date={current_date}")
+
+        return {
+            "first_analysis_date": current_date,
+            "last_analysis_date": "-"
+        }
+    else:
+        # Повторний аналіз - оновлюємо дату останнього аналізу
+        record.last_analysis_date = current_date
+        record.analysis_count += 1
+        record.updated_at = datetime.utcnow()
+        db.commit()
+
+        logger.info(f"Updated analysis record: campaign={campaign_id}, period={period}, count={record.analysis_count}, last={current_date}")
+
+        return {
+            "first_analysis_date": record.first_analysis_date,
+            "last_analysis_date": current_date
+        }
 
 
 async def run_analytics_task(job_id: str, params: Dict[str, Any]):
@@ -611,7 +671,12 @@ async def save_run_history(request: Request, payload: Dict[str, Any]):
 
 @app.get("/api/meta-data")
 @limiter.limit("30/minute")
-async def get_meta_data(request: Request, start_date: str = None, end_date: str = None):
+async def get_meta_data(
+    request: Request,
+    start_date: str = None,
+    end_date: str = None,
+    db: Session = Depends(get_db)
+):
     """
     Получить данные из Meta API для всех 3 вкладок за один запрос.
 
@@ -782,10 +847,16 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
             price_per_lead = cpl  # Дублирование согласно требованиям
             price_per_target_lead = round((spend / target_leads), 2) if target_leads > 0 else 0
 
+            # Отримуємо дати аналізу для кампанії (перший/повторний аналіз)
+            period = f"{insight.get('date_start', '')} - {insight.get('date_stop', '')}"
+            analysis_dates = get_or_create_analysis_record(db, campaign_id, period)
+
             ads_data.append({
                 "campaign_name": insight.get("campaign_name", ""),
                 "campaign_id": campaign_id,
-                "period": f"{insight.get('date_start', '')} - {insight.get('date_stop', '')}",
+                "period": period,
+                "first_analysis_date": analysis_dates["first_analysis_date"],
+                "last_analysis_date": analysis_dates["last_analysis_date"],
                 "date_start": insight.get("date_start", ""),
                 "date_stop": insight.get("date_stop", ""),
                 "date_update": datetime.now().strftime("%Y-%m-%d"),
