@@ -733,8 +733,8 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
                 logger.info(f"Campaign {campaign_id}: funnel_stats keys = {list(funnel_stats.keys())}")
 
             # Базовые показатели
-            leads_count = funnel_stats.get("Кількість лідів", 0)
-            spend = insight.get("spend", 0)
+            leads_count = int(funnel_stats.get("Кількість лідів", 0)) if funnel_stats.get("Кількість лідів") else 0
+            spend = float(insight.get("spend", 0))
 
             # Целевые/нецелевые лиды (по аналогии со students_data)
             contact_established = funnel_stats.get("Вст контакт зацікавлений", 0)
@@ -851,8 +851,8 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
                 funnel_stats = campaign_tracking.get("funnel_stats", {})
 
                 # Базові показники
-                leads_count = funnel_stats.get("Кількість лідів", 0)
-                budget = insight.get("spend", 0)
+                leads_count = int(funnel_stats.get("Кількість лідів", 0)) if funnel_stats.get("Кількість лідів") else 0
+                budget = float(insight.get("spend", 0))
 
                 # ВСІ 38 СТАТУСІВ ALFACRM (основна + вторинна воронка)
                 # Основна воронка (20 статусів)
@@ -1088,9 +1088,9 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
                 funnel_stats = campaign_tracking.get("funnel_stats", {})
 
                 # Базові показники
-                leads_count_alfacrm = funnel_stats.get("Кількість лідів", 0)  # З AlfaCRM (для Phase 2)
-                leads_count = insight.get("leads_count_fb", 0)  # З Facebook (Phase 1)
-                budget = insight.get("spend", 0)
+                leads_count_alfacrm = int(funnel_stats.get("Кількість лідів", 0)) if funnel_stats.get("Кількість лідів") else 0  # З AlfaCRM (для Phase 2)
+                leads_count = int(insight.get("leads_count_fb", 0))  # З Facebook (Phase 1)
+                budget = float(insight.get("spend", 0))
 
                 # Маппінг статусів NetHunt на поля endpoint (основні 9 статусів)
                 new_leads = funnel_stats.get("Нові", 0)
