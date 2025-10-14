@@ -33,7 +33,7 @@ from .connectors import crm as crm_tools
 from .config_store import get_config_masked, set_config
 from .connectors import crm as crm_conn
 from .middleware.auth import verify_api_key
-from .database import init_db, get_db
+from .database import init_db, get_db_session
 from .models import PipelineRun, RunLog, CampaignAnalysisHistory
 from .analytics_processor import AnalyticsProcessor
 from .services import nethunt_tracking
@@ -675,7 +675,7 @@ async def get_meta_data(
     request: Request,
     start_date: str = None,
     end_date: str = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Получить данные из Meta API для всех 3 вкладок за один запрос.
