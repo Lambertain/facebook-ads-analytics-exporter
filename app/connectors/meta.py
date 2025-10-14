@@ -79,6 +79,8 @@ def fetch_insights(ad_account_id: str, access_token: str, date_from: str, date_t
             "cpm",
             "ctr",
             "objective",
+            "actions",  # Містить lead, link_click та інші дії
+            "action_values",  # Вартість дій
         ]),
         "limit": 500,
     }
@@ -174,6 +176,58 @@ def fetch_insights(ad_account_id: str, access_token: str, date_from: str, date_t
 #
 #     logger.info(f"Successfully fetched {len(results)} total leads")
 #     return results
+
+
+def fetch_adset_targeting(adset_ids: List[str], access_token: str) -> Dict[str, Dict[str, Any]]:
+    """Fetch targeting info (location) for given adset IDs.
+
+    Returns a dict mapping adset_id to targeting data.
+    """
+    targeting_data = {}
+
+    for adset_id in adset_ids:
+        try:
+            url = f"{GRAPH_URL}/{adset_id}"
+            params = {
+                "access_token": access_token,
+                "fields": "targeting"
+            }
+            data = _make_meta_request(url, params)
+            targeting = data.get("targeting", {})
+
+            # Извлекаем локации
+            locations = []
+            geo_locations = targeting.get("geo_locations", {})
+
+            # Страны
+            countries = geo_locations.get("countries", [])
+            if countries:
+                locations.extend(countries)
+
+            # Города
+            cities = geo_locations.get("cities", [])
+            for city in cities:
+                city_name = city.get("name", "")
+                if city_name:
+                    locations.append(city_name)
+
+            # Регионы
+            regions = geo_locations.get("regions", [])
+            for region in regions:
+                region_name = region.get("name", "")
+                if region_name:
+                    locations.append(region_name)
+
+            targeting_data[adset_id] = {
+                "location": ", ".join(locations) if locations else "Worldwide"
+            }
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch targeting for adset {adset_id}: {e}")
+            targeting_data[adset_id] = {"location": "Unknown"}
+
+    logger.info(f"Fetched targeting data for {len(targeting_data)} adsets")
+    return targeting_data
 
 
 def fetch_ad_creatives(ad_ids: List[str], access_token: str, ad_account_id: str = None) -> Dict[str, Dict[str, Any]]:

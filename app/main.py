@@ -652,8 +652,13 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
         ad_ids = [insight.get("ad_id") for insight in insights if insight.get("ad_id")]
         creatives = meta_conn.fetch_ad_creatives(ad_ids, meta_token, ad_account_id) if ad_ids else {}
 
-        # 3) Обогащаем insights креативами
+        # 2.1) Получаем таргетинг (локации) для adsets
+        adset_ids = list(set([insight.get("adset_id") for insight in insights if insight.get("adset_id")]))
+        targeting = meta_conn.fetch_adset_targeting(adset_ids, meta_token) if adset_ids else {}
+
+        # 3) Обогащаем insights креативами и таргетингом
         for insight in insights:
+            # Добавляем креативы
             ad_id = insight.get("ad_id")
             if ad_id and ad_id in creatives:
                 creative_data = creatives[ad_id]
@@ -665,6 +670,20 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
                 # Debug logging для першого креативу
                 if len(insights) > 0 and insight == insights[0]:
                     logger.info(f"DEBUG first creative: ad_id={ad_id}, image_url={creative_data.get('image_url')}, thumbnail={creative_data.get('thumbnail_url')}")
+
+            # Добавляем таргетинг (локации)
+            adset_id = insight.get("adset_id")
+            if adset_id and adset_id in targeting:
+                insight["location"] = targeting[adset_id].get("location", "")
+
+            # Извлекаем количество лидов из actions
+            actions = insight.get("actions", [])
+            leads_count = 0
+            for action in actions:
+                if action.get("action_type") == "lead":
+                    leads_count = int(action.get("value", 0))
+                    break
+            insight["leads_count_fb"] = leads_count
 
         # 4) Формируем данные для вкладки РЕКЛАМА з інтеграцією AlfaCRM tracking
         ads_data = []
@@ -689,6 +708,10 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
                     page_size=500
                 )
                 logger.info(f"Loaded ads tracking for {len(ads_tracking)} campaigns")
+                if ads_tracking:
+                    logger.info(f"ads_tracking keys sample: {list(ads_tracking.keys())[:3]}")
+                    first_key = next(iter(ads_tracking))
+                    logger.info(f"First campaign structure: {list(ads_tracking[first_key].keys())}")
             else:
                 logger.warning("META_PAGE_ID або META_PAGE_ACCESS_TOKEN не налаштовані")
         except Exception as e:
@@ -698,8 +721,16 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
             campaign_id = insight.get("campaign_id", "")
 
             # Получаем статистику воронки для кампании
-            campaign_tracking = ads_tracking.get(f"campaign_{campaign_id}", {})
+            # Ключ в ads_tracking это "campaign_123", НЕ просто "123"
+            tracking_key = f"campaign_{campaign_id}"
+            campaign_tracking = ads_tracking.get(tracking_key, {})
             funnel_stats = campaign_tracking.get("funnel_stats", {})
+
+            # Debug logging
+            if not funnel_stats:
+                logger.warning(f"No funnel_stats for campaign {campaign_id} (campaign_{campaign_id})")
+            else:
+                logger.info(f"Campaign {campaign_id}: funnel_stats keys = {list(funnel_stats.keys())}")
 
             # Базовые показатели
             leads_count = funnel_stats.get("Кількість лідів", 0)
@@ -746,11 +777,12 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
                 "creative_text": insight.get("creative_body", ""),
                 "image_url": insight.get("image_url", ""),
                 "thumbnail_url": insight.get("thumbnail_url", ""),
+                "location": insight.get("location", ""),  # НОВЕ: Локація з Facebook
                 "ctr": insight.get("ctr", 0),
                 "cpl": cpl,
                 "cpm": insight.get("cpm", 0),
                 "spend": spend,
-                "leads_count": leads_count,
+                "leads_count": insight.get("leads_count_fb", 0),  # НОВЕ: Кількість лідів з Facebook
                 "leads_target": target_leads,
                 "leads_non_target": non_target_leads,
                 "leads_no_answer": no_answer,
@@ -1056,7 +1088,8 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
                 funnel_stats = campaign_tracking.get("funnel_stats", {})
 
                 # Базові показники
-                leads_count = funnel_stats.get("Кількість лідів", 0)
+                leads_count_alfacrm = funnel_stats.get("Кількість лідів", 0)  # З AlfaCRM (для Phase 2)
+                leads_count = insight.get("leads_count_fb", 0)  # З Facebook (Phase 1)
                 budget = insight.get("spend", 0)
 
                 # Маппінг статусів NetHunt на поля endpoint (основні 9 статусів)

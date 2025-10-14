@@ -267,6 +267,10 @@ export interface MetaTeacher {
   trial_completed_from_total_percent: string
   trial_completed_from_scheduled_percent: string
   trial_to_purchase_percent: string
+  // ДИНАМІЧНІ ПОЛЯ NetHunt CRM статусів
+  // Статуси динамічно виявляються з реальних даних NetHunt API (не фіксований список)
+  // Приклади: "Нові": 10, "Контакт встановлено": 8, "Кваліфіковані": 5, і т.д.
+  [key: string]: string | number
 }
 
 export interface MetaDataResponse {
