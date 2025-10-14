@@ -636,6 +636,23 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
         if not start_date or not end_date:
             return JSONResponse({"error": "start_date та end_date обов'язкові"}, status_code=400)
 
+        # Читаємо ключові слова для фільтрації кампаній (один раз на початку)
+        keywords_teachers_raw = os.getenv("CAMPAIGN_KEYWORDS_TEACHERS", "")
+        keywords_students_raw = os.getenv("CAMPAIGN_KEYWORDS_STUDENTS", "")
+
+        if keywords_teachers_raw:
+            keywords_teachers = [k.strip().lower() for k in keywords_teachers_raw.split(",") if k.strip()]
+        else:
+            keywords_teachers = ["teacher", "vchitel"]
+
+        if keywords_students_raw:
+            keywords_students = [k.strip().lower() for k in keywords_students_raw.split(",") if k.strip()]
+        else:
+            keywords_students = ["student", "shkolnik"]
+
+        logger.info(f"Keywords teachers: {keywords_teachers}")
+        logger.info(f"Keywords students: {keywords_students}")
+
         # 1) Получаем данные из Meta API (один раз для всех вкладок)
         logger.info(f"Fetching Meta data for period {start_date} - {end_date}")
         insights = meta_conn.fetch_insights(
@@ -810,7 +827,7 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
 
             if meta_page_id and meta_page_token:
                 # Фільтруємо лідів тільки для кампаній студентів
-                keywords_students = os.getenv("CAMPAIGN_KEYWORDS_STUDENTS", "student,shkolnik").lower().split(",")
+                # (keywords_students вже прочитані на початку функції)
 
                 all_campaigns = await meta_leads.get_leads_for_period(
                     page_id=meta_page_id,
@@ -840,7 +857,7 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
         for insight in insights:
             campaign_name = insight.get("campaign_name", "").lower()
             campaign_id = insight.get("campaign_id", "")
-            keywords_students = os.getenv("CAMPAIGN_KEYWORDS_STUDENTS", "student,shkolnik").lower().split(",")
+            # (keywords_students вже прочитані на початку функції)
 
             # Проверяем является ли кампания студенческой
             is_student_campaign = any(keyword.strip() in campaign_name for keyword in keywords_students)
@@ -1023,7 +1040,7 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
 
             if meta_page_id and meta_page_token and nh_folder:
                 # Фільтруємо лідів тільки для кампаній вчителів
-                keywords_teachers = os.getenv("CAMPAIGN_KEYWORDS_TEACHERS", "teacher,vchitel").lower().split(",")
+                # (keywords_teachers вже прочитані на початку функції)
 
                 all_campaigns = await meta_leads.get_leads_for_period(
                     page_id=meta_page_id,
@@ -1077,7 +1094,7 @@ async def get_meta_data(request: Request, start_date: str = None, end_date: str 
         for insight in insights:
             campaign_name = insight.get("campaign_name", "").lower()
             campaign_id = insight.get("campaign_id", "")
-            keywords_teachers = os.getenv("CAMPAIGN_KEYWORDS_TEACHERS", "teacher,vchitel").lower().split(",")
+            # (keywords_teachers вже прочитані на початку функції)
 
             # Проверяем является ли кампания для викладачів
             is_teacher_campaign = any(keyword.strip() in campaign_name for keyword in keywords_teachers)
@@ -2084,6 +2101,23 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
             if not sheet_id:
                 raise RuntimeError("GOOGLE_SHEET_ID обов'язковий коли STORAGE_BACKEND=sheets")
 
+        # Читаємо ключові слова для фільтрації кампаній (один раз на початку)
+        keywords_teachers_raw = os.getenv("CAMPAIGN_KEYWORDS_TEACHERS", "")
+        keywords_students_raw = os.getenv("CAMPAIGN_KEYWORDS_STUDENTS", "")
+
+        if keywords_teachers_raw:
+            keywords_teachers = [k.strip().lower() for k in keywords_teachers_raw.split(",") if k.strip()]
+        else:
+            keywords_teachers = ["teacher", "vchitel"]
+
+        if keywords_students_raw:
+            keywords_students = [k.strip().lower() for k in keywords_students_raw.split(",") if k.strip()]
+        else:
+            keywords_students = ["student", "shkolnik"]
+
+        logger.info(f"Pipeline keywords teachers: {keywords_teachers}")
+        logger.info(f"Pipeline keywords students: {keywords_students}")
+
         # 1) Fetch Ads insights
         progress.update(job_id, 10, "Отримання статистики Meta Ads (рівень оголошень)")
         insights = meta_conn.fetch_insights(
@@ -2152,7 +2186,7 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
 
                     if meta_page_id and meta_page_token:
                         # Фільтруємо лідів тільки для кампаній вчителів
-                        keywords_teachers = os.getenv("CAMPAIGN_KEYWORDS_TEACHERS", "teacher,vchitel").lower().split(",")
+                        # (keywords_teachers вже прочитані на початку функції)
 
                         all_campaigns = await meta_leads.get_leads_for_period(
                             page_id=meta_page_id,
@@ -2227,7 +2261,7 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
 
                     if meta_page_id and meta_page_token:
                         # Фільтруємо лідів тільки для кампаній студентів
-                        keywords_students = os.getenv("CAMPAIGN_KEYWORDS_STUDENTS", "student,shkolnik").lower().split(",")
+                        # (keywords_students вже прочитані на початку функції)
 
                         all_campaigns = await meta_leads.get_leads_for_period(
                             page_id=meta_page_id,
