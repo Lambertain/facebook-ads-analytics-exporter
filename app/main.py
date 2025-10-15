@@ -1024,7 +1024,7 @@ async def get_meta_data(
                     "period": f"{start_date} - {end_date}",
                     "budget": budget,
                     "location": insight.get("location", ""),  # Локація з таргетингу Facebook
-                    "leads_count": leads_count,
+                    "leads_count": insight.get("leads_count_fb", 0),  # Кількість лідів з Facebook API
                     "leads_check": leads_count,  # Дублюємо для сумісності
                     "not_processed": not_processed,
                     "contact_established": contact_established,
