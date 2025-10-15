@@ -1023,7 +1023,7 @@ async def get_meta_data(
                     "analysis_date": datetime.now().strftime("%Y-%m-%d"),
                     "period": f"{start_date} - {end_date}",
                     "budget": budget,
-                    "location": "треба API",  # Geo targeting требует дополнительный запрос
+                    "location": insight.get("location", ""),  # Локація з таргетингу Facebook
                     "leads_count": leads_count,
                     "leads_check": leads_count,  # Дублюємо для сумісності
                     "not_processed": not_processed,
@@ -1214,7 +1214,7 @@ async def get_meta_data(
                     "analysis_date": datetime.now().strftime("%Y-%m-%d"),
                     "period": f"{start_date} - {end_date}",
                     "budget": budget,
-                    "location": "треба API",  # Geo targeting потребує окремий запрос
+                    "location": insight.get("location", ""),  # Локація з таргетингу Facebook
                     "leads_count": leads_count,
                     "leads_check": leads_count,
                     "new_leads": new_leads,
