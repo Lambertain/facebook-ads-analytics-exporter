@@ -913,6 +913,14 @@ async def get_meta_data(
                     if any(kw.strip() in cdata.get("campaign_name", "").lower() for kw in keywords_students)
                 }
 
+                logger.info(f"Filtered {len(student_campaigns)} student campaigns out of {len(all_campaigns)} total campaigns")
+
+                # DEBUG: Показати назви відфільтрованих кампаній (перші 5)
+                if student_campaigns:
+                    sample_campaigns = list(student_campaigns.values())[:5]
+                    for sc in sample_campaigns:
+                        logger.info(f"  STUDENT campaign: {sc.get('campaign_name')}")
+
                 # Трекінг через AlfaCRM з inference підходом
                 # Функція сама завантажить студентів і відфільтрує тільки релевантних
                 students_tracking = await alfacrm_tracking.track_leads_by_campaigns(
@@ -925,175 +933,175 @@ async def get_meta_data(
         except Exception as e:
             logger.error(f"Failed to load student tracking: {e}")
 
-        for insight in insights:
-            campaign_name = insight.get("campaign_name", "").lower()
-            campaign_id = insight.get("campaign_id", "")
-            # (keywords_students вже прочитані на початку функції)
+        # Ітеруємо по відфільтрованим student_campaigns (не залежить від insights)
+        # ВИПРАВЛЕНО 2025-10-16: insights може бути порожнім через rate limit,
+        # але student_campaigns завжди є (отримуємо через leadgen_forms API)
+        for campaign_id, campaign_data in student_campaigns.items():
+            campaign_name = campaign_data.get("campaign_name", "")
 
-            # Проверяем является ли кампания студенческой
-            is_student_campaign = any(keyword.strip() in campaign_name for keyword in keywords_students)
+            # Отримуємо статистику воронки для цієї кампанії
+            campaign_tracking = students_tracking.get(campaign_id, {})
+            funnel_stats = campaign_tracking.get("funnel_stats", {})
 
-            if is_student_campaign:
-                # Отримуємо статистику воронки для цієї кампанії
-                campaign_tracking = students_tracking.get(f"campaign_{campaign_id}", {})
-                funnel_stats = campaign_tracking.get("funnel_stats", {})
+            # Базові показники
+            leads_count = int(funnel_stats.get("Кількість лідів", 0)) if funnel_stats.get("Кількість лідів") else 0
+            # Кількість лідів з Facebook (з leadgen_forms API)
+            leads_count_fb = len(campaign_data.get("leads", []))
+            # Budget немає в leadgen_forms API (тільки в insights), ставимо 0
+            budget = 0.0
 
-                # Базові показники
-                leads_count = int(funnel_stats.get("Кількість лідів", 0)) if funnel_stats.get("Кількість лідів") else 0
-                budget = float(insight.get("spend", 0))
+            # ВСІ 38 СТАТУСІВ ALFACRM (основна + вторинна воронка)
+            # Основна воронка (20 статусів)
+            status_13 = funnel_stats.get("Не розібраний", 0)
+            status_11 = funnel_stats.get("Недодзвон", 0)
+            status_10 = funnel_stats.get("Недозвон 2", 0)
+            status_27 = funnel_stats.get("Недозвон 3", 0)
+            status_1 = funnel_stats.get("Вст контакт невідомо", 0)
+            status_32 = funnel_stats.get("Вст контакт зацікавлений", 0)
+            status_26 = funnel_stats.get("Зник після контакту", 0)
+            status_12 = funnel_stats.get("Розмовляли, чекаємо відповідь", 0)
+            status_6 = funnel_stats.get("Чекає пробного", 0)
+            status_2 = funnel_stats.get("Призначено пробне", 0)
+            status_3 = funnel_stats.get("Проведено пробне", 0)
+            status_5 = funnel_stats.get("Не відвідав пробне", 0)
+            status_9 = funnel_stats.get("Чекаємо оплату", 0)
+            status_4 = funnel_stats.get("Отримана оплата", 0)
+            status_29 = funnel_stats.get("Сплатить через 2 тижні >", 0)
+            status_25 = funnel_stats.get("Передзвонити через 2 тижні", 0)
+            status_30 = funnel_stats.get("Передзвон через місяць", 0)
+            status_31 = funnel_stats.get("Передзвон 2 місяці і більше", 0)
+            status_8 = funnel_stats.get("Опрацювати заперечення", 0)
+            status_50 = funnel_stats.get("Старі клієнти", 0)
 
-                # ВСІ 38 СТАТУСІВ ALFACRM (основна + вторинна воронка)
-                # Основна воронка (20 статусів)
-                status_13 = funnel_stats.get("Не розібраний", 0)
-                status_11 = funnel_stats.get("Недодзвон", 0)
-                status_10 = funnel_stats.get("Недозвон 2", 0)
-                status_27 = funnel_stats.get("Недозвон 3", 0)
-                status_1 = funnel_stats.get("Вст контакт невідомо", 0)
-                status_32 = funnel_stats.get("Вст контакт зацікавлений", 0)
-                status_26 = funnel_stats.get("Зник після контакту", 0)
-                status_12 = funnel_stats.get("Розмовляли, чекаємо відповідь", 0)
-                status_6 = funnel_stats.get("Чекає пробного", 0)
-                status_2 = funnel_stats.get("Призначено пробне", 0)
-                status_3 = funnel_stats.get("Проведено пробне", 0)
-                status_5 = funnel_stats.get("Не відвідав пробне", 0)
-                status_9 = funnel_stats.get("Чекаємо оплату", 0)
-                status_4 = funnel_stats.get("Отримана оплата", 0)
-                status_29 = funnel_stats.get("Сплатить через 2 тижні >", 0)
-                status_25 = funnel_stats.get("Передзвонити через 2 тижні", 0)
-                status_30 = funnel_stats.get("Передзвон через місяць", 0)
-                status_31 = funnel_stats.get("Передзвон 2 місяці і більше", 0)
-                status_8 = funnel_stats.get("Опрацювати заперечення", 0)
-                status_50 = funnel_stats.get("Старі клієнти", 0)
+            # Вторинна воронка (18 статусів)
+            status_18 = funnel_stats.get("Недозвон", 0)
+            status_40 = funnel_stats.get("Недозвон 2", 0)  # дублікат
+            status_42 = funnel_stats.get("недозвон 3", 0)
+            status_43 = funnel_stats.get("Встан коннт невідомо", 0)
+            status_22 = funnel_stats.get("Встан контакт зацікавлений", 0)
+            status_44 = funnel_stats.get("Зник після контакту", 0)  # дублікат
+            status_24 = funnel_stats.get("Розмовляли чекаємо відповіді", 0)
+            status_34 = funnel_stats.get("Чекає пробного", 0)  # дублікат
+            status_35 = funnel_stats.get("Призначено пробне", 0)  # дублікат
+            status_37 = funnel_stats.get("Проведено пробне", 0)  # дублікат
+            status_36 = funnel_stats.get("Не відвідав пробне", 0)  # дублікат
+            status_38 = funnel_stats.get("Чекає оплату", 0)  # дублікат
+            status_39 = funnel_stats.get("Отримана оплата", 0)  # дублікат конверсії
+            status_45 = funnel_stats.get("Сплатить через 2 тижні", 0)
+            status_46 = funnel_stats.get("Передзвонити через 2 тижні", 0)  # дублікат
+            status_47 = funnel_stats.get("Передз через місяць", 0)
+            status_48 = funnel_stats.get("Передзвон 2 місяці і більше", 0)  # дублікат
+            status_49 = funnel_stats.get("Опрацювати заперечення", 0)  # дублікат
 
-                # Вторинна воронка (18 статусів)
-                status_18 = funnel_stats.get("Недозвон", 0)
-                status_40 = funnel_stats.get("Недозвон 2", 0)  # дублікат
-                status_42 = funnel_stats.get("недозвон 3", 0)
-                status_43 = funnel_stats.get("Встан коннт невідомо", 0)
-                status_22 = funnel_stats.get("Встан контакт зацікавлений", 0)
-                status_44 = funnel_stats.get("Зник після контакту", 0)  # дублікат
-                status_24 = funnel_stats.get("Розмовляли чекаємо відповіді", 0)
-                status_34 = funnel_stats.get("Чекає пробного", 0)  # дублікат
-                status_35 = funnel_stats.get("Призначено пробне", 0)  # дублікат
-                status_37 = funnel_stats.get("Проведено пробне", 0)  # дублікат
-                status_36 = funnel_stats.get("Не відвідав пробне", 0)  # дублікат
-                status_38 = funnel_stats.get("Чекає оплату", 0)  # дублікат
-                status_39 = funnel_stats.get("Отримана оплата", 0)  # дублікат конверсії
-                status_45 = funnel_stats.get("Сплатить через 2 тижні", 0)
-                status_46 = funnel_stats.get("Передзвонити через 2 тижні", 0)  # дублікат
-                status_47 = funnel_stats.get("Передз через місяць", 0)
-                status_48 = funnel_stats.get("Передзвон 2 місяці і більше", 0)  # дублікат
-                status_49 = funnel_stats.get("Опрацювати заперечення", 0)  # дублікат
+            # Старі маппінги для зворотної сумісності
+            not_processed = status_13
+            contact_established = status_32
+            trial_scheduled = status_2
+            trial_completed = status_3
+            waiting_payment = status_9
+            purchased = status_4 + status_39  # Обидві воронки
 
-                # Старі маппінги для зворотної сумісності
-                not_processed = status_13
-                contact_established = status_32
-                trial_scheduled = status_2
-                trial_completed = status_3
-                waiting_payment = status_9
-                purchased = status_4 + status_39  # Обидві воронки
+            # Недзвони (всі варіанти)
+            no_answer = status_11 + status_10 + status_27 + status_18 + status_40 + status_42
 
-                # Недзвони (всі варіанти)
-                no_answer = status_11 + status_10 + status_27 + status_18 + status_40 + status_42
+            # Цільові/нецільові
+            target_leads = contact_established  # Всі хто встановив контакт і зацікавлені
+            non_target_leads = not_processed + no_answer  # Необроблені + недзвони
 
-                # Цільові/нецільові
-                target_leads = contact_established  # Всі хто встановив контакт і зацікавлені
-                non_target_leads = not_processed + no_answer  # Необроблені + недзвони
+            # Розрахунок відсотків
+            percent_target = round((target_leads / leads_count * 100), 2) if leads_count > 0 else 0
+            percent_non_target = round((non_target_leads / leads_count * 100), 2) if leads_count > 0 else 0
+            percent_contact = round((contact_established / leads_count * 100), 2) if leads_count > 0 else 0
+            percent_conversion = round((purchased / leads_count * 100), 2) if leads_count > 0 else 0
+            percent_no_answer = round((no_answer / leads_count * 100), 2) if leads_count > 0 else 0
 
-                # Розрахунок відсотків
-                percent_target = round((target_leads / leads_count * 100), 2) if leads_count > 0 else 0
-                percent_non_target = round((non_target_leads / leads_count * 100), 2) if leads_count > 0 else 0
-                percent_contact = round((contact_established / leads_count * 100), 2) if leads_count > 0 else 0
-                percent_conversion = round((purchased / leads_count * 100), 2) if leads_count > 0 else 0
-                percent_no_answer = round((no_answer / leads_count * 100), 2) if leads_count > 0 else 0
+            # Розрахунок для пробних уроків
+            percent_trial_scheduled = round((trial_scheduled / leads_count * 100), 2) if leads_count > 0 else 0
+            percent_trial_completed = round((trial_completed / leads_count * 100), 2) if leads_count > 0 else 0
+            percent_trial_conversion = round((trial_completed / trial_scheduled * 100), 2) if trial_scheduled > 0 else 0
+            conversion_trial_to_sale = round((purchased / trial_completed * 100), 2) if trial_completed > 0 else 0
 
-                # Розрахунок для пробних уроків
-                percent_trial_scheduled = round((trial_scheduled / leads_count * 100), 2) if leads_count > 0 else 0
-                percent_trial_completed = round((trial_completed / leads_count * 100), 2) if leads_count > 0 else 0
-                percent_trial_conversion = round((trial_completed / trial_scheduled * 100), 2) if trial_scheduled > 0 else 0
-                conversion_trial_to_sale = round((purchased / trial_completed * 100), 2) if trial_completed > 0 else 0
+            # Ціна за ліда
+            price_per_lead = round((budget / leads_count), 2) if leads_count > 0 else 0
+            price_per_target_lead = round((budget / target_leads), 2) if target_leads > 0 else 0
 
-                # Ціна за ліда
-                price_per_lead = round((budget / leads_count), 2) if leads_count > 0 else 0
-                price_per_target_lead = round((budget / target_leads), 2) if target_leads > 0 else 0
-
-                students_data.append({
-                    "campaign_name": insight.get("campaign_name", ""),
-                    "campaign_link": f"https://facebook.com/ads/manager/campaigns/edit/{campaign_id}",
-                    "analysis_date": datetime.now().strftime("%Y-%m-%d"),
-                    "period": f"{start_date} - {end_date}",
-                    "budget": budget,
-                    "location": insight.get("location", ""),  # Локація з таргетингу Facebook
-                    "leads_count": insight.get("leads_count_fb", 0),  # Кількість лідів з Facebook API
-                    "leads_check": leads_count,  # Дублюємо для сумісності
-                    "not_processed": not_processed,
-                    "contact_established": contact_established,
-                    "in_progress": funnel_stats.get("Розмовляли, чекаємо відповідь", 0),
-                    "trial_scheduled": trial_scheduled,
-                    "trial_completed": trial_completed,
-                    "waiting_payment": waiting_payment,
-                    "purchased": purchased,
-                    "archive": funnel_stats.get("Зник після контакту", 0),
-                    "no_answer": no_answer,
-                    "archive_non_target": 0,  # TODO: визначити з клієнтом маппінг
-                    "target_leads": target_leads,
-                    "non_target_leads": non_target_leads,
-                    "percent_target": percent_target,
-                    "percent_non_target": percent_non_target,
-                    "percent_contact": percent_contact,
-                    "percent_in_progress": round((funnel_stats.get("Розмовляли, чекаємо відповідь", 0) / leads_count * 100), 2) if leads_count > 0 else 0,
-                    "percent_conversion": percent_conversion,
-                    "percent_archive": round((funnel_stats.get("Зник після контакту", 0) / leads_count * 100), 2) if leads_count > 0 else 0,
-                    "percent_no_answer": percent_no_answer,
-                    "price_per_lead": price_per_lead,
-                    "price_per_target_lead": price_per_target_lead,
-                    "notes": "",
-                    "percent_trial_scheduled": percent_trial_scheduled,
-                    "percent_trial_completed": percent_trial_completed,
-                    "percent_trial_conversion": percent_trial_conversion,
-                    "conversion_trial_to_sale": conversion_trial_to_sale,
-                    # ВСІ 38 СТАТУСІВ ALFACRM для journey відображення
-                    # Основна воронка
-                    "status_13": status_13,  # Не розібраний
-                    "status_11": status_11,  # Недодзвон
-                    "status_10": status_10,  # Недозвон 2
-                    "status_27": status_27,  # Недозвон 3
-                    "status_1": status_1,    # Вст контакт невідомо
-                    "status_32": status_32,  # Вст контакт зацікавлений
-                    "status_26": status_26,  # Зник після контакту
-                    "status_12": status_12,  # Розмовляли, чекаємо відповідь
-                    "status_6": status_6,    # Чекає пробного
-                    "status_2": status_2,    # Призначено пробне
-                    "status_3": status_3,    # Проведено пробне
-                    "status_5": status_5,    # Не відвідав пробне
-                    "status_9": status_9,    # Чекаємо оплату
-                    "status_4": status_4,    # Отримана оплата
-                    "status_29": status_29,  # Сплатить через 2 тижні >
-                    "status_25": status_25,  # Передзвонити через 2 тижні
-                    "status_30": status_30,  # Передзвон через місяць
-                    "status_31": status_31,  # Передзвон 2 місяці і більше
-                    "status_8": status_8,    # Опрацювати заперечення
-                    "status_50": status_50,  # Старі клієнти
-                    # Вторинна воронка
-                    "status_18": status_18,  # Недозвон
-                    "status_40": status_40,  # Недозвон 2 (дублікат)
-                    "status_42": status_42,  # недозвон 3
-                    "status_43": status_43,  # Встан коннт невідомо
-                    "status_22": status_22,  # Встан контакт зацікавлений
-                    "status_44": status_44,  # Зник після контакту (дублікат)
-                    "status_24": status_24,  # Розмовляли чекаємо відповіді
-                    "status_34": status_34,  # Чекає пробного (дублікат)
-                    "status_35": status_35,  # Призначено пробне (дублікат)
-                    "status_37": status_37,  # Проведено пробне (дублікат)
-                    "status_36": status_36,  # Не відвідав пробне (дублікат)
-                    "status_38": status_38,  # Чекає оплату (дублікат)
-                    "status_39": status_39,  # Отримана оплата (дублікат конверсії)
-                    "status_45": status_45,  # Сплатить через 2 тижні
-                    "status_46": status_46,  # Передзвонити через 2 тижні (дублікат)
-                    "status_47": status_47,  # Передз через місяць
-                    "status_48": status_48,  # Передзвон 2 місяці і більше (дублікат)
-                    "status_49": status_49   # Опрацювати заперечення (дублікат)
-                })
+            students_data.append({
+                "campaign_name": campaign_name,
+                "campaign_link": f"https://facebook.com/ads/manager/campaigns/edit/{campaign_id}",
+                "analysis_date": datetime.now().strftime("%Y-%m-%d"),
+                "period": f"{start_date} - {end_date}",
+                "budget": budget,
+                "location": campaign_data.get("location", ""),  # Локація з таргетингу Facebook
+                "leads_count": leads_count_fb,  # Кількість лідів з Facebook API (з leadgen_forms)
+                "leads_check": leads_count,  # Дублюємо для сумісності
+                "not_processed": not_processed,
+                "contact_established": contact_established,
+                "in_progress": funnel_stats.get("Розмовляли, чекаємо відповідь", 0),
+                "trial_scheduled": trial_scheduled,
+                "trial_completed": trial_completed,
+                "waiting_payment": waiting_payment,
+                "purchased": purchased,
+                "archive": funnel_stats.get("Зник після контакту", 0),
+                "no_answer": no_answer,
+                "archive_non_target": 0,  # TODO: визначити з клієнтом маппінг
+                "target_leads": target_leads,
+                "non_target_leads": non_target_leads,
+                "percent_target": percent_target,
+                "percent_non_target": percent_non_target,
+                "percent_contact": percent_contact,
+                "percent_in_progress": round((funnel_stats.get("Розмовляли, чекаємо відповідь", 0) / leads_count * 100), 2) if leads_count > 0 else 0,
+                "percent_conversion": percent_conversion,
+                "percent_archive": round((funnel_stats.get("Зник після контакту", 0) / leads_count * 100), 2) if leads_count > 0 else 0,
+                "percent_no_answer": percent_no_answer,
+                "price_per_lead": price_per_lead,
+                "price_per_target_lead": price_per_target_lead,
+                "notes": "",
+                "percent_trial_scheduled": percent_trial_scheduled,
+                "percent_trial_completed": percent_trial_completed,
+                "percent_trial_conversion": percent_trial_conversion,
+                "conversion_trial_to_sale": conversion_trial_to_sale,
+                # ВСІ 38 СТАТУСІВ ALFACRM для journey відображення
+                # Основна воронка
+                "status_13": status_13,  # Не розібраний
+                "status_11": status_11,  # Недодзвон
+                "status_10": status_10,  # Недозвон 2
+                "status_27": status_27,  # Недозвон 3
+                "status_1": status_1,    # Вст контакт невідомо
+                "status_32": status_32,  # Вст контакт зацікавлений
+                "status_26": status_26,  # Зник після контакту
+                "status_12": status_12,  # Розмовляли, чекаємо відповідь
+                "status_6": status_6,    # Чекає пробного
+                "status_2": status_2,    # Призначено пробне
+                "status_3": status_3,    # Проведено пробне
+                "status_5": status_5,    # Не відвідав пробне
+                "status_9": status_9,    # Чекаємо оплату
+                "status_4": status_4,    # Отримана оплата
+                "status_29": status_29,  # Сплатить через 2 тижні >
+                "status_25": status_25,  # Передзвонити через 2 тижні
+                "status_30": status_30,  # Передзвон через місяць
+                "status_31": status_31,  # Передзвон 2 місяці і більше
+                "status_8": status_8,    # Опрацювати заперечення
+                "status_50": status_50,  # Старі клієнти
+                # Вторинна воронка
+                "status_18": status_18,  # Недозвон
+                "status_40": status_40,  # Недозвон 2 (дублікат)
+                "status_42": status_42,  # недозвон 3
+                "status_43": status_43,  # Встан коннт невідомо
+                "status_22": status_22,  # Встан контакт зацікавлений
+                "status_44": status_44,  # Зник після контакту (дублікат)
+                "status_24": status_24,  # Розмовляли чекаємо відповіді
+                "status_34": status_34,  # Чекає пробного (дублікат)
+                "status_35": status_35,  # Призначено пробне (дублікат)
+                "status_37": status_37,  # Проведено пробне (дублікат)
+                "status_36": status_36,  # Не відвідав пробне (дублікат)
+                "status_38": status_38,  # Чекає оплату (дублікат)
+                "status_39": status_39,  # Отримана оплата (дублікат конверсії)
+                "status_45": status_45,  # Сплатить через 2 тижні
+                "status_46": status_46,  # Передзвонити через 2 тижні (дублікат)
+                "status_47": status_47,  # Передз через місяць
+                "status_48": status_48,  # Передзвон 2 місяці і більше (дублікат)
+                "status_49": status_49   # Опрацювати заперечення (дублікат)
+            })
 
         # 6) Формируем данные для вкладки ВЧИТЕЛІ з інтеграцією NetHunt tracking
         teachers_data = []
