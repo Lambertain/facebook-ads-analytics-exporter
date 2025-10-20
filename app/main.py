@@ -892,6 +892,11 @@ async def get_meta_data(
         student_campaigns = {}
         student_index = {}
 
+        # Змінні для збору метаданих фільтрації
+        all_campaigns_count = 0
+        student_campaigns_count = 0
+        teacher_campaigns_count_var = 0
+
         try:
             meta_page_id = os.getenv("META_PAGE_ID")
             meta_page_token = os.getenv("META_PAGE_ACCESS_TOKEN")
@@ -907,19 +912,37 @@ async def get_meta_data(
                     end_date=end_date
                 )
 
+                # Зберігаємо загальну кількість для метаданих
+                all_campaigns_count = len(all_campaigns)
+
+                # INFO: Показати ВСІ назви кампаній ДО фільтрації
+                logger.info(f"[STUDENTS] Before filtering: Total {len(all_campaigns)} campaigns from Meta API")
+                logger.info(f"[STUDENTS] Keywords used for filtering: {keywords_students}")
+                if all_campaigns:
+                    sample_all = list(all_campaigns.values())[:10]
+                    for idx, camp in enumerate(sample_all, 1):
+                        camp_name = camp.get("campaign_name", "NO_NAME")
+                        camp_name_lower = camp_name.lower()
+                        logger.info(f"[STUDENTS]   {idx}. Campaign: '{camp_name}' (lowercase: '{camp_name_lower}')")
+
                 # Фільтруємо тільки кампанії студентів
                 student_campaigns = {
                     cid: cdata for cid, cdata in all_campaigns.items()
                     if any(kw.strip() in cdata.get("campaign_name", "").lower() for kw in keywords_students)
                 }
 
-                logger.info(f"Filtered {len(student_campaigns)} student campaigns out of {len(all_campaigns)} total campaigns")
+                # Зберігаємо кількість для метаданих
+                student_campaigns_count = len(student_campaigns)
 
-                # DEBUG: Показати назви відфільтрованих кампаній (перші 5)
+                logger.info(f"[STUDENTS] After filtering: {len(student_campaigns)} student campaigns out of {len(all_campaigns)} total")
+
+                # INFO: Показати назви відфільтрованих кампаній (перші 5)
                 if student_campaigns:
                     sample_campaigns = list(student_campaigns.values())[:5]
                     for sc in sample_campaigns:
-                        logger.info(f"  STUDENT campaign: {sc.get('campaign_name')}")
+                        logger.info(f"[STUDENTS]   ✓ Matched campaign: {sc.get('campaign_name')}")
+                else:
+                    logger.warning(f"[STUDENTS]   No student campaigns found! Check if keywords match any campaign names.")
 
                 # Трекінг через AlfaCRM з inference підходом
                 # Функція сама завантажить студентів і відфільтрує тільки релевантних
@@ -936,6 +959,7 @@ async def get_meta_data(
         # Ітеруємо по відфільтрованим student_campaigns (не залежить від insights)
         # ВИПРАВЛЕНО 2025-10-16: insights може бути порожнім через rate limit,
         # але student_campaigns завжди є (отримуємо через leadgen_forms API)
+        students_data_debug_counter = 0  # Лічильник для DEBUG виводу
         for campaign_id, campaign_data in student_campaigns.items():
             campaign_name = campaign_data.get("campaign_name", "")
 
@@ -949,6 +973,15 @@ async def get_meta_data(
             leads_count_fb = len(campaign_data.get("leads", []))
             # Budget немає в leadgen_forms API (тільки в insights), ставимо 0
             budget = 0.0
+
+            # DEBUG: Показати дані першої кампанії для діагностики
+            students_data_debug_counter += 1
+            if students_data_debug_counter <= 3:
+                logger.info(f"[DEBUG STUDENTS LOOP {students_data_debug_counter}] Campaign: '{campaign_name}'")
+                logger.info(f"[DEBUG STUDENTS LOOP {students_data_debug_counter}]   leads_count_fb (from leadforms): {leads_count_fb}")
+                logger.info(f"[DEBUG STUDENTS LOOP {students_data_debug_counter}]   leads_count (from AlfaCRM): {leads_count}")
+                logger.info(f"[DEBUG STUDENTS LOOP {students_data_debug_counter}]   funnel_stats keys: {list(funnel_stats.keys())[:5]}")  # Перші 5 ключів
+                logger.info(f"[DEBUG STUDENTS LOOP {students_data_debug_counter}]   campaign_tracking has data: {bool(campaign_tracking)}")
 
             # ВСІ 38 СТАТУСІВ ALFACRM (основна + вторинна воронка)
             # Основна воронка (20 статусів)
@@ -1103,6 +1136,13 @@ async def get_meta_data(
                 "status_49": status_49   # Опрацювати заперечення (дублікат)
             })
 
+        # INFO: Перевірка фінального розміру масиву students_data ПІСЛЯ циклу
+        logger.info(f"[STUDENTS FINAL] Total students_data records: {len(students_data)}")
+        if students_data:
+            logger.info(f"[STUDENTS FINAL] Sample first student: campaign={students_data[0].get('campaign_name')}, leads_count={students_data[0].get('leads_count')}")
+        else:
+            logger.warning(f"[STUDENTS FINAL] students_data is EMPTY!")
+
         # 6) Формируем данные для вкладки ВЧИТЕЛІ з інтеграцією NetHunt tracking
         teachers_data = []
 
@@ -1128,11 +1168,32 @@ async def get_meta_data(
                     end_date=end_date
                 )
 
+                # INFO: Показати ВСІ назви кампаній ДО фільтрації (для вчителів)
+                logger.info(f"[TEACHERS] Before filtering: Total {len(all_campaigns)} campaigns from Meta API")
+                logger.info(f"[TEACHERS] Keywords used for filtering: {keywords_teachers}")
+                if all_campaigns:
+                    sample_all_teachers = list(all_campaigns.values())[:10]
+                    for idx, camp in enumerate(sample_all_teachers, 1):
+                        camp_name = camp.get("campaign_name", "NO_NAME")
+                        camp_name_lower = camp_name.lower()
+                        logger.info(f"[TEACHERS]   {idx}. Campaign: '{camp_name}' (lowercase: '{camp_name_lower}')")
+
                 # Фільтруємо тільки кампанії вчителів
                 teacher_campaigns = {
                     cid: cdata for cid, cdata in all_campaigns.items()
                     if any(kw.strip() in cdata.get("campaign_name", "").lower() for kw in keywords_teachers)
                 }
+
+                # Зберігаємо кількість для метаданих
+                teacher_campaigns_count_var = len(teacher_campaigns)
+
+                logger.info(f"[TEACHERS] After filtering: {len(teacher_campaigns)} teacher campaigns out of {len(all_campaigns)} total")
+                if teacher_campaigns:
+                    sample_teachers = list(teacher_campaigns.values())[:5]
+                    for tc in sample_teachers:
+                        logger.info(f"[TEACHERS]   ✓ Matched campaign: {tc.get('campaign_name')}")
+                else:
+                    logger.warning(f"[TEACHERS]   No teacher campaigns found! Check if keywords match any campaign names.")
 
                 # Завантажуємо історію змін з NetHunt
                 from services.nethunt_tracking import (
@@ -1290,6 +1351,28 @@ async def get_meta_data(
         except Exception as e:
             logger.error(f"Failed to extract teacher phone data: {e}")
 
+        # DEBUG: Фінальна перевірка даних перед поверненням
+        logger.info(f"[DEBUG FINAL RESPONSE] ads count: {len(ads_data)}")
+        logger.info(f"[DEBUG FINAL RESPONSE] students count: {len(students_data)}")
+        logger.info(f"[DEBUG FINAL RESPONSE] teachers count: {len(teachers_data)}")
+        if students_data:
+            logger.info(f"[DEBUG FINAL RESPONSE] First student campaign: {students_data[0].get('campaign_name')}")
+
+        # Формуємо повідомлення для фільтрів
+        students_filter_message = None
+        if student_campaigns_count == 0 and all_campaigns_count > 0:
+            if not keywords_students or keywords_students == [""]:
+                students_filter_message = "Не налаштовані ключові слова для студентських кампаній. Будь ласка, додайте їх в Налаштуваннях."
+            else:
+                students_filter_message = f"Не знайдено жодної кампанії зі словами: {', '.join(keywords_students)}. Перевірте правильність ключових слів в Налаштуваннях."
+
+        teachers_filter_message = None
+        if teacher_campaigns_count_var == 0 and all_campaigns_count > 0:
+            if not keywords_teachers or keywords_teachers == [""]:
+                teachers_filter_message = "Не налаштовані ключові слова для викладацьких кампаній. Будь ласка, додайте їх в Налаштуваннях."
+            else:
+                teachers_filter_message = f"Не знайдено жодної кампанії зі словами: {', '.join(keywords_teachers)}. Перевірте правильність ключових слів в Налаштуваннях."
+
         return {
             "ads": ads_data,
             "students": students_data,
@@ -1298,6 +1381,19 @@ async def get_meta_data(
             "lead_phones": {
                 "students": lead_phones_students,
                 "teachers": lead_phones_teachers
+            },
+            "filter_info": {
+                "total_campaigns": all_campaigns_count,
+                "students": {
+                    "keywords": keywords_students,
+                    "matched_campaigns": student_campaigns_count,
+                    "message": students_filter_message
+                },
+                "teachers": {
+                    "keywords": keywords_teachers,
+                    "matched_campaigns": teacher_campaigns_count_var,
+                    "message": teachers_filter_message
+                }
             },
             "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "period": f"{start_date} - {end_date}"

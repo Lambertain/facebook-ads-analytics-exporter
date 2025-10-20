@@ -14,6 +14,7 @@ import { MetaStudent } from './api'
 
 interface StudentsTableProps {
   students: MetaStudent[]
+  filterInfo?: any
 }
 
 // Кольори для різних груп колонок
@@ -70,11 +71,36 @@ const STATUS_COLUMNS_SECONDARY = [
 
 const ALL_STATUS_COLUMNS = [...STATUS_COLUMNS_MAIN, ...STATUS_COLUMNS_SECONDARY]
 
-export default function StudentsTable({ students }: StudentsTableProps) {
+export default function StudentsTable({ students, filterInfo }: StudentsTableProps) {
+  // Отримуємо повідомлення з filter_info або використовуємо fallback
+  const getMessage = () => {
+    if (!filterInfo || !filterInfo.students) {
+      return 'Немає даних студентів'
+    }
+
+    const { message, keywords, matched_campaigns, total_campaigns } = filterInfo.students || {}
+
+    // Якщо є кастомне повідомлення з бекенду - використовуємо його
+    if (message) {
+      return (
+        <>
+          <div>{message}</div>
+          <div style={{ marginTop: '8px', fontSize: '0.9em', opacity: 0.8 }}>
+            Використані ключові слова: {keywords?.join(', ') || 'не налаштовані'}<br />
+            Знайдено студентських кампаній: {matched_campaigns || 0} з {total_campaigns || 0} всього
+          </div>
+        </>
+      )
+    }
+
+    // Fallback якщо немає повідомлення
+    return 'Немає даних студентів'
+  }
+
   return (
     <>
       {students.length === 0 && (
-        <Alert severity="info" sx={{ mb: 2 }}>Немає даних студентів</Alert>
+        <Alert severity="info" sx={{ mb: 2 }}>{getMessage()}</Alert>
       )}
       <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
         <Table stickyHeader size="small">

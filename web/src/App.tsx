@@ -75,6 +75,7 @@ export default function App() {
   const [studentsData, setStudentsData] = useState<any[]>([])
   const [teachersData, setTeachersData] = useState<any[]>([])
   const [adsData, setAdsData] = useState<any[]>([])
+  const [filterInfo, setFilterInfo] = useState<any>(null)
 
   // History states
   const [runs, setRuns] = useState<PipelineRun[]>([])
@@ -225,6 +226,7 @@ export default function App() {
       setAdsData(metaData.ads)
       setStudentsData(metaData.students)
       setTeachersData(metaData.teachers)
+      setFilterInfo(metaData.filter_info || null)
 
       setProgress(100)
       setStatus('done')
@@ -510,7 +512,7 @@ export default function App() {
             )}
 
             {dataTab === 'students' && (
-              <StudentsTable students={studentsData} />
+              <StudentsTable students={studentsData} filterInfo={filterInfo} />
             )}
 
             {dataTab === 'teachers' && (
