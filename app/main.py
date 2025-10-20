@@ -411,6 +411,39 @@ async def get_config(request: Request):
     return get_config_masked()
 
 
+@app.get("/api/debug/keywords")
+async def debug_keywords(request: Request):
+    """Діагностичний endpoint для перевірки поточних ключових слів."""
+    keywords_teachers_raw = os.environ.get("CAMPAIGN_KEYWORDS_TEACHERS", "")
+    keywords_students_raw = os.environ.get("CAMPAIGN_KEYWORDS_STUDENTS", "")
+
+    if keywords_teachers_raw:
+        keywords_teachers = [k.strip().lower() for k in keywords_teachers_raw.split(",") if k.strip()]
+    else:
+        keywords_teachers = ["teacher", "vchitel"]
+
+    if keywords_students_raw:
+        keywords_students = [k.strip().lower() for k in keywords_students_raw.split(",") if k.strip()]
+    else:
+        keywords_students = ["student", "shkolnik"]
+
+    return {
+        "teachers": {
+            "raw": keywords_teachers_raw,
+            "raw_length": len(keywords_teachers_raw),
+            "parsed": keywords_teachers,
+            "count": len(keywords_teachers)
+        },
+        "students": {
+            "raw": keywords_students_raw,
+            "raw_length": len(keywords_students_raw),
+            "parsed": keywords_students,
+            "count": len(keywords_students)
+        },
+        "os_environ_keys": [k for k in os.environ.keys() if "CAMPAIGN_KEYWORDS" in k]
+    }
+
+
 @app.post("/api/config")
 @limiter.limit("5/minute")
 async def update_config(
@@ -701,9 +734,11 @@ async def get_meta_data(
         if not start_date or not end_date:
             return JSONResponse({"error": "start_date та end_date обов'язкові"}, status_code=400)
 
-        # Читаємо ключові слова для фільтрації кампаній (один раз на початку)
-        keywords_teachers_raw = os.getenv("CAMPAIGN_KEYWORDS_TEACHERS", "")
-        keywords_students_raw = os.getenv("CAMPAIGN_KEYWORDS_STUDENTS", "")
+        # Читаємо ключові слова для фільтрації кампаній (динамічно з оновленого os.environ)
+        # ВАЖЛИВО: Читаємо КОЖЕН РАЗ з os.environ, а не кешуємо при запуску,
+        # щоб зміни через UI (вкладка Налаштування) одразу застосовувалися
+        keywords_teachers_raw = os.environ.get("CAMPAIGN_KEYWORDS_TEACHERS", "")
+        keywords_students_raw = os.environ.get("CAMPAIGN_KEYWORDS_STUDENTS", "")
 
         if keywords_teachers_raw:
             keywords_teachers = [k.strip().lower() for k in keywords_teachers_raw.split(",") if k.strip()]
@@ -715,8 +750,14 @@ async def get_meta_data(
         else:
             keywords_students = ["student", "shkolnik"]
 
-        logger.info(f"Keywords teachers: {keywords_teachers}")
-        logger.info(f"Keywords students: {keywords_students}")
+        logger.info(f"[KEYWORDS] Teachers raw value: '{keywords_teachers_raw}' (length={len(keywords_teachers_raw)})")
+        logger.info(f"[KEYWORDS] Teachers parsed: {keywords_teachers}")
+        logger.info(f"[KEYWORDS] Students raw value: '{keywords_students_raw}' (length={len(keywords_students_raw)})")
+        logger.info(f"[KEYWORDS] Students parsed: {keywords_students}")
+
+        # Діагностична перевірка
+        if not keywords_students:
+            logger.warning(f"[KEYWORDS] ⚠️ STUDENTS KEYWORDS IS EMPTY! Raw value was: '{keywords_students_raw}'")
 
         # 1) Получаем данные из Meta API (один раз для всех вкладок)
         logger.info(f"Fetching Meta data for period {start_date} - {end_date}")
