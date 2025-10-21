@@ -4,8 +4,9 @@ AlfaCRM Lead Tracking Service
 Трекинг прогресса лидов из Meta Ads через статусы AlfaCRM.
 Подсчет количества лидов на каждом этапе воронки для студентов.
 
-ПОДХОД: Inference - восстановление пути из текущего статуса.
-Использует lead_journey_recovery.py для определения всех статусов через которые прошел лид.
+ПОДХОД: Current-Status-Only - каждый лид учитывается ТОЛЬКО в текущем статусе.
+Это исключает дублирование лидов в нескольких колонках статусов.
+Гарантирует что сума лидов по статусам = общее количество лидов.
 """
 import os
 import logging
@@ -17,7 +18,6 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from connectors.crm import alfacrm_list_students
-from services.lead_journey_recovery import recover_lead_journey, ALFACRM_STATUS_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -283,21 +283,18 @@ def track_campaign_leads(
             lead_status_id = student.get("lead_status_id")
 
             if lead_status_id:
-                # ВОССТАНОВЛЕНО 2025-10-21: Кумулятивная воронка как в NetHunt
-                # ПРИЧИНА: UI ожидает что лиды отображаются на ВСЕХ этапах воронки через которые прошли
-                # Используем inference подход - восстанавливаем путь лида через воронку
-                journey = recover_lead_journey(lead_status_id)
+                # ИСПРАВЛЕНО 2025-10-22: Переход от cumulative funnel к current-status-only
+                # ПРИЧИНА: Один лид должен учитываться ТОЛЬКО в текущем статусе, а не во всех статусах пути
+                # Это исключает дублирование лидов в таблице СТУДЕНТЫ
 
-                # Засчитываем лида в КАЖДОМ статусе через который он прошел
-                # Это создает КУМУЛЯТИВНУЮ воронку - стандартное отображение sales funnel
-                for status_id in journey:
-                    status_name = ALFACRM_STATUS_MAPPING.get(status_id)
-                    if status_name and status_name in status_counts:
-                        status_counts[status_name] += 1
-            # ИСПРАВЛЕНО 2025-10-22: Убрано неправильное добавление в "Не розібраний"
+                # Рахуємо лід ТІЛЬКИ в поточному статусі (current-status-only підхід)
+                # Це гарантує що сума статусів = загальна кількість лідів
+                status_name = ALFACRM_STATUS_MAPPING.get(lead_status_id)
+                if status_name and status_name in status_counts:
+                    status_counts[status_name] += 1
+            # Лиды без lead_status_id не добавляются ни в какой статус
             # "Не розібраний" (status_id=13) - это РЕАЛЬНЫЙ статус в AlfaCRM
-            # Лиды без lead_status_id не должны попадать в "Не розібраний"
-            # Они будут обработаны через cumulative funnel если lead_status_id=13
+            # Лиды с lead_status_id=None учитываются только в общем количестве лидов
 
         else:
             not_found_count += 1
