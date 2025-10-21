@@ -9,7 +9,7 @@ import FolderOpenIcon from '@mui/icons-material/FolderOpen'
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
 import { DatePicker, LocalizationProvider } from '@mui/x-date-pickers'
 import dayjs, { Dayjs } from 'dayjs'
-import { ConfigMap, getConfig, inspectExcelHeaders, listAlfaCompanies, listNetHuntFolders, openEventStream, startJob, runAnalytics, updateConfig, getMetaData, exportMetaExcel, saveRunHistory } from './api'
+import { ConfigMap, getConfig, inspectExcelHeaders, listAlfaCompanies, listNetHuntFolders, openEventStream, startJob, runAnalytics, updateConfig, getMetaData, exportMetaExcel, saveRunHistory, saveSearchResults, getSearchHistory, SearchHistoryItem, getSearchResults, SearchResultsResponse } from './api'
 import StudentsTable from './StudentsTable'
 
 type TabKey = 'instructions' | 'run' | 'settings' | 'history'
@@ -77,11 +77,16 @@ export default function App() {
   const [adsData, setAdsData] = useState<any[]>([])
   const [filterInfo, setFilterInfo] = useState<any>(null)
 
-  // History states
+  // History states (OLD - pipeline runs, keeping for reference)
   const [runs, setRuns] = useState<PipelineRun[]>([])
   const [selectedRun, setSelectedRun] = useState<{ run: PipelineRun; logs: RunLog[] } | null>(null)
   const [historyFilter, setHistoryFilter] = useState<string>('')
   const [selectedRunIds, setSelectedRunIds] = useState<Set<number>>(new Set())
+
+  // NEW History states - search history
+  const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([])
+  const [selectedSearch, setSelectedSearch] = useState<SearchResultsResponse | null>(null)
+  const [tabFilter, setTabFilter] = useState<'all' | 'ads' | 'students' | 'teachers'>('all')
 
   useEffect(() => { (async () => {
     try {
@@ -91,20 +96,23 @@ export default function App() {
     } catch (e) { setSnack('Не вдалося завантажити конфігурацію') }
   })() }, [])
 
-  // Load history when history tab is opened or filter changes
+  // Load NEW search history when history tab is opened or filter changes
   useEffect(() => {
     if (tab === 'history') {
-      loadHistory()
+      loadSearchHistory()
     }
-  }, [tab, historyFilter])
+  }, [tab, tabFilter])
 
-  async function loadHistory() {
+  async function loadSearchHistory() {
     try {
-      const response = await fetch(`/api/runs?limit=100&status=${historyFilter}`)
-      const data = await response.json()
-      setRuns(data.runs || [])
+      const params: any = { limit: 100 }
+      if (tabFilter !== 'all') {
+        params.tab_type = tabFilter
+      }
+      const data = await getSearchHistory(params)
+      setSearchHistory(data.history || [])
     } catch (e) {
-      setSnack('Не вдалося завантажити історію')
+      setSnack('Не вдалося завантажити історію пошуків')
     }
   }
 
@@ -170,10 +178,61 @@ export default function App() {
       setSnack(`Видалено ${selectedRunIds.size} записів`)
       setSelectedRunIds(new Set())
       setSelectedRun(null)
-      await loadHistory()
+      await loadSearchHistory()
     } catch (e: any) {
       console.error('Delete error:', e)
       setSnack('Помилка видалення записів: ' + (e?.message || ''))
+    }
+  }
+
+  // NEW function - load full search results details
+  async function loadSearchResultsDetails(searchId: number) {
+    try {
+      const data = await getSearchResults(searchId)
+      setSelectedSearch(data)
+    } catch (e) {
+      setSnack('Не вдалося завантажити деталі пошуку')
+    }
+  }
+
+  // NEW function - download Excel using SAVED results (not re-fetching from Meta)
+  async function onDownloadSearchExcel(search: SearchHistoryItem) {
+    try {
+      console.log('Downloading Excel for search:', search)
+
+      // Завантажуємо ЗБЕРЕЖЕНІ результати з БД
+      setSnack('Завантаження збережених результатів...')
+      const searchResults = await getSearchResults(search.id)
+
+      if (!searchResults.results || searchResults.results.length === 0) {
+        setSnack('Немає даних для експорту')
+        return
+      }
+
+      // Готуємо дані для експорту залежно від типу вкладки
+      const exportData: any = {
+        ads: [],
+        students: [],
+        teachers: []
+      }
+
+      if (searchResults.tab_type === 'ads') {
+        exportData.ads = searchResults.results
+      } else if (searchResults.tab_type === 'students') {
+        exportData.students = searchResults.results
+      } else if (searchResults.tab_type === 'teachers') {
+        exportData.teachers = searchResults.results
+      }
+
+      setSnack('Генерація Excel файлу...')
+
+      // Експортуємо в Excel
+      await exportMetaExcel(exportData)
+
+      setSnack(null)
+    } catch (e: any) {
+      console.error('Excel export error:', e)
+      setSnack('Помилка завантаження: ' + (e?.message || e?.toString() || 'Невідома помилка'))
     }
   }
 
@@ -247,6 +306,52 @@ export default function App() {
         console.error('Failed to save history:', e)
       }
 
+      // Зберігаємо результати кожної вкладки окремо в нову БД search_history
+      try {
+        setLogs(l => [...l, 'Збереження результатів у БД...'])
+
+        const savePromises = []
+
+        if (metaData.ads.length > 0) {
+          savePromises.push(
+            saveSearchResults({
+              start_date: startDate,
+              end_date: endDate,
+              tab_type: 'ads',
+              results_data: metaData.ads
+            })
+          )
+        }
+
+        if (metaData.students.length > 0) {
+          savePromises.push(
+            saveSearchResults({
+              start_date: startDate,
+              end_date: endDate,
+              tab_type: 'students',
+              results_data: metaData.students
+            })
+          )
+        }
+
+        if (metaData.teachers.length > 0) {
+          savePromises.push(
+            saveSearchResults({
+              start_date: startDate,
+              end_date: endDate,
+              tab_type: 'teachers',
+              results_data: metaData.teachers
+            })
+          )
+        }
+
+        await Promise.all(savePromises)
+        setLogs(l => [...l, `Результати збережено в БД: ${savePromises.length} вкладок`])
+      } catch (e) {
+        console.error('Failed to save search results:', e)
+        setLogs(l => [...l, `Помилка збереження результатів: ${e}`])
+      }
+
     } catch (e: any) {
       setSnack('Не вдалося запустити завдання: ' + (e?.message || ''))
       setStatus('error')
@@ -291,8 +396,8 @@ export default function App() {
     setStatus('idle')
     setLogs([])
     setSnack('Результати очищено та перенесено в історію')
-    // Перезавантажуємо історію
-    loadHistory()
+    // Перезавантажуємо історію пошуків
+    loadSearchHistory()
   }
 
   async function onDownloadExcel() {
@@ -652,112 +757,97 @@ export default function App() {
 
   const historyTab = (
     <Box sx={{ mt: 2 }}>
-      <Alert severity="info" sx={{ mb: 2 }}>
-        <strong>Примітка:</strong> Історія зберігається тільки протягом поточної сесії.
-        При оновленні додатку історія очищується. Для постійного зберігання потрібна PostgreSQL база даних.
+      <Alert severity="success" sx={{ mb: 2 }}>
+        <strong>Нова історія пошуків!</strong> Результати з усіх 3 вкладок (РЕКЛАМА, СТУДЕНТИ, ВЧИТЕЛИ) зберігаються в PostgreSQL базі даних.
+        Ви можете переглядати і завантажувати збережені результати в будь-який час.
       </Alert>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2, gap: 2 }}>
-        <Typography variant="h5">Історія запусків</Typography>
-        <Button variant="outlined" size="small" onClick={() => setHistoryFilter('')}>Усі</Button>
-        <Button variant="outlined" size="small" onClick={() => setHistoryFilter('success')}>Успішні</Button>
-        <Button variant="outlined" size="small" onClick={() => setHistoryFilter('error')}>Помилки</Button>
-        <Button variant="outlined" size="small" onClick={loadHistory}>Оновити</Button>
+        <Typography variant="h5">Історія пошуків</Typography>
         <Button
-          variant="outlined"
+          variant={tabFilter === 'all' ? 'contained' : 'outlined'}
           size="small"
-          color="error"
-          onClick={deleteSelectedRuns}
-          disabled={selectedRunIds.size === 0}
+          onClick={() => setTabFilter('all')}
         >
-          Видалити вибрані ({selectedRunIds.size})
+          Усі
         </Button>
+        <Button
+          variant={tabFilter === 'ads' ? 'contained' : 'outlined'}
+          size="small"
+          onClick={() => setTabFilter('ads')}
+        >
+          Реклама
+        </Button>
+        <Button
+          variant={tabFilter === 'students' ? 'contained' : 'outlined'}
+          size="small"
+          onClick={() => setTabFilter('students')}
+        >
+          Студенти
+        </Button>
+        <Button
+          variant={tabFilter === 'teachers' ? 'contained' : 'outlined'}
+          size="small"
+          onClick={() => setTabFilter('teachers')}
+        >
+          Вчителі
+        </Button>
+        <Button variant="outlined" size="small" onClick={loadSearchHistory}>Оновити</Button>
       </Box>
 
       <Grid container spacing={2}>
-        {/* Список запусків */}
+        {/* Список пошуків */}
         <Grid size={6}>
           <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
-                  <TableCell padding="checkbox">
-                    <Checkbox
-                      checked={runs.length > 0 && selectedRunIds.size === runs.length}
-                      indeterminate={selectedRunIds.size > 0 && selectedRunIds.size < runs.length}
-                      onChange={toggleAllRuns}
-                    />
-                  </TableCell>
                   <TableCell>ID</TableCell>
                   <TableCell>Період</TableCell>
-                  <TableCell>Статус</TableCell>
-                  <TableCell>Час</TableCell>
-                  <TableCell>Записи</TableCell>
+                  <TableCell>Тип вкладки</TableCell>
+                  <TableCell>Записів</TableCell>
+                  <TableCell>Дата створення</TableCell>
                   <TableCell>Дії</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {runs.length === 0 ? (
-                  <TableRow><TableCell colSpan={7} align="center">Немає історії запусків</TableCell></TableRow>
-                ) : runs.map((run) => (
+                {searchHistory.length === 0 ? (
+                  <TableRow><TableCell colSpan={6} align="center">Немає історії пошуків</TableCell></TableRow>
+                ) : searchHistory.map((search) => (
                   <TableRow
-                    key={run.id}
+                    key={search.id}
                     hover
-                    selected={selectedRun?.run.id === run.id}
+                    selected={selectedSearch?.id === search.id}
                     sx={{ cursor: 'pointer' }}
+                    onClick={() => loadSearchResultsDetails(search.id)}
                   >
-                    <TableCell padding="checkbox" onClick={(e) => e.stopPropagation()}>
-                      <Checkbox
-                        checked={selectedRunIds.has(run.id)}
-                        onChange={() => toggleRunSelection(run.id)}
-                      />
-                    </TableCell>
-                    <TableCell onClick={() => loadRunDetails(run.id)}>{run.id}</TableCell>
-                    <TableCell onClick={() => loadRunDetails(run.id)}>{run.start_date} - {run.end_date}</TableCell>
-                    <TableCell onClick={() => loadRunDetails(run.id)}>
+                    <TableCell>{search.id}</TableCell>
+                    <TableCell>{search.start_date} - {search.end_date}</TableCell>
+                    <TableCell>
                       <Box sx={{
                         display: 'inline-block',
                         px: 1,
                         py: 0.5,
                         borderRadius: 1,
                         fontSize: '0.75rem',
-                        bgcolor: run.status === 'success' ? '#d4edda' : run.status === 'error' ? '#f8d7da' : '#fff3cd',
-                        color: run.status === 'success' ? '#155724' : run.status === 'error' ? '#721c24' : '#856404'
+                        bgcolor: search.tab_type === 'ads' ? '#e3f2fd' : search.tab_type === 'students' ? '#f3e5f5' : '#fff3e0',
+                        color: search.tab_type === 'ads' ? '#1565c0' : search.tab_type === 'students' ? '#6a1b9a' : '#e65100'
                       }}>
-                        {run.status}
+                        {search.tab_type === 'ads' ? 'РЕКЛАМА' : search.tab_type === 'students' ? 'СТУДЕНТИ' : 'ВЧИТЕЛІ'}
                       </Box>
                     </TableCell>
-                    <TableCell onClick={() => loadRunDetails(run.id)} sx={{ fontSize: '0.75rem' }}>
-                      {run.start_time ? new Date(run.start_time).toLocaleString('uk-UA') : '-'}
-                    </TableCell>
-                    <TableCell onClick={() => loadRunDetails(run.id)}>
-                      {run.insights_count + run.students_count + run.teachers_count}
+                    <TableCell>{search.results_count}</TableCell>
+                    <TableCell sx={{ fontSize: '0.75rem' }}>
+                      {new Date(search.created_at).toLocaleString('uk-UA')}
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
-                      <IconButton
+                      <Button
+                        variant="outlined"
                         size="small"
-                        color="error"
-                        onClick={async () => {
-                          if (window.confirm(`Видалити запуск #${run.id}?`)) {
-                            try {
-                              const response = await fetch(`/api/runs/${run.id}`, { method: 'DELETE' })
-                              if (response.ok) {
-                                setSnack(`Запуск #${run.id} видалено`)
-                                await loadHistory()
-                                if (selectedRun?.run.id === run.id) {
-                                  setSelectedRun(null)
-                                }
-                              } else {
-                                const error = await response.json()
-                                setSnack(`Помилка: ${error.error}`)
-                              }
-                            } catch (e: any) {
-                              setSnack(`Помилка: ${e.message}`)
-                            }
-                          }
-                        }}
+                        color="success"
+                        onClick={() => onDownloadSearchExcel(search)}
                       >
-                        <span style={{ fontSize: '16px' }}>🗑️</span>
-                      </IconButton>
+                        Excel
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -766,57 +856,65 @@ export default function App() {
           </TableContainer>
         </Grid>
 
-        {/* Деталі обраного запуску */}
+        {/* Деталі обраного пошуку */}
         <Grid size={6}>
-          {selectedRun ? (
+          {selectedSearch ? (
             <Box>
               <Paper sx={{ p: 2, mb: 2 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                  <Typography variant="h6">Деталі запуску #{selectedRun.run.id}</Typography>
+                  <Typography variant="h6">Деталі пошуку #{selectedSearch.id}</Typography>
                   <Button
-                    variant="outlined"
+                    variant="contained"
                     color="success"
                     size="medium"
-                    onClick={() => onDownloadHistoryExcel(selectedRun.run)}
+                    onClick={() => onDownloadSearchExcel({
+                      id: selectedSearch.id,
+                      start_date: selectedSearch.start_date,
+                      end_date: selectedSearch.end_date,
+                      tab_type: selectedSearch.tab_type,
+                      results_count: selectedSearch.results_count,
+                      created_at: selectedSearch.created_at
+                    })}
                   >
                     Завантажити Excel
                   </Button>
                 </Box>
                 <Grid container spacing={1}>
-                  <Grid size={6}><Typography variant="body2"><strong>Job ID:</strong> {selectedRun.run.job_id}</Typography></Grid>
-                  <Grid size={6}><Typography variant="body2"><strong>Статус:</strong> {selectedRun.run.status}</Typography></Grid>
-                  <Grid size={6}><Typography variant="body2"><strong>Період:</strong> {selectedRun.run.start_date} - {selectedRun.run.end_date}</Typography></Grid>
-                  <Grid size={6}><Typography variant="body2"><strong>Сховище:</strong> {selectedRun.run.storage_backend}</Typography></Grid>
-                  <Grid size={6}><Typography variant="body2"><strong>Креативи:</strong> {selectedRun.run.insights_count}</Typography></Grid>
-                  <Grid size={6}><Typography variant="body2"><strong>Студенти:</strong> {selectedRun.run.students_count}</Typography></Grid>
-                  <Grid size={6}><Typography variant="body2"><strong>Викладачі:</strong> {selectedRun.run.teachers_count}</Typography></Grid>
-                  <Grid size={6}><Typography variant="body2"><strong>Початок:</strong> {selectedRun.run.start_time ? new Date(selectedRun.run.start_time).toLocaleString('uk-UA') : '-'}</Typography></Grid>
-                  <Grid size={6}><Typography variant="body2"><strong>Кінець:</strong> {selectedRun.run.end_time ? new Date(selectedRun.run.end_time).toLocaleString('uk-UA') : '-'}</Typography></Grid>
-                  {selectedRun.run.error_message && (
-                    <Grid size={12}>
-                      <Typography variant="body2" color="error"><strong>Помилка:</strong> {selectedRun.run.error_message}</Typography>
-                    </Grid>
-                  )}
+                  <Grid size={6}><Typography variant="body2"><strong>Період:</strong> {selectedSearch.start_date} - {selectedSearch.end_date}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Тип вкладки:</strong> {
+                    selectedSearch.tab_type === 'ads' ? 'РЕКЛАМА' :
+                    selectedSearch.tab_type === 'students' ? 'СТУДЕНТИ' : 'ВЧИТЕЛІ'
+                  }</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Записів:</strong> {selectedSearch.results_count}</Typography></Grid>
+                  <Grid size={6}><Typography variant="body2"><strong>Створено:</strong> {new Date(selectedSearch.created_at).toLocaleString('uk-UA')}</Typography></Grid>
                 </Grid>
               </Paper>
 
               <Paper sx={{ p: 2 }}>
-                <Typography variant="h6" gutterBottom>Логи</Typography>
-                <Box sx={{ maxHeight: 400, overflow: 'auto', fontFamily: 'monospace', fontSize: '0.8rem', bgcolor: '#f7f7f7', p: 1, borderRadius: 1 }}>
-                  {selectedRun.logs.map((log) => (
-                    <div key={log.id}>
-                      <span style={{ color: log.level === 'error' ? 'red' : log.level === 'warning' ? 'orange' : 'inherit' }}>
-                        [{log.timestamp ? new Date(log.timestamp).toLocaleTimeString('uk-UA') : '-'}]
-                      </span>
-                      {' '}[{log.level}] {log.message}
-                    </div>
+                <Typography variant="h6" gutterBottom>Попередній перегляд результатів</Typography>
+                <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
+                  Показано перші 5 записів з {selectedSearch.results_count}
+                </Typography>
+                <Box sx={{ maxHeight: 400, overflow: 'auto', fontFamily: 'monospace', fontSize: '0.75rem', bgcolor: '#f7f7f7', p: 1, borderRadius: 1 }}>
+                  {selectedSearch.results.slice(0, 5).map((result: any, idx: number) => (
+                    <Box key={idx} sx={{ mb: 1, pb: 1, borderBottom: idx < 4 ? '1px solid #ddd' : 'none' }}>
+                      <strong>Запис #{idx + 1}:</strong>
+                      <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}>
+                        {JSON.stringify(result, null, 2)}
+                      </pre>
+                    </Box>
                   ))}
+                  {selectedSearch.results_count > 5 && (
+                    <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mt: 1, textAlign: 'center' }}>
+                      ... ще {selectedSearch.results_count - 5} записів (завантажте Excel для перегляду всіх)
+                    </Typography>
+                  )}
                 </Box>
               </Paper>
             </Box>
           ) : (
             <Paper sx={{ p: 3, textAlign: 'center' }}>
-              <Typography variant="body1" color="textSecondary">Оберіть запуск зі списку для перегляду деталей</Typography>
+              <Typography variant="body1" color="textSecondary">Оберіть пошук зі списку для перегляду деталей</Typography>
             </Paper>
           )}
         </Grid>

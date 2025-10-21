@@ -84,3 +84,21 @@ class CampaignAnalysisHistory(Base):
 
     def __repr__(self):
         return f"<CampaignAnalysisHistory(campaign_id={self.campaign_id}, period={self.period}, count={self.analysis_count})>"
+
+
+class SearchHistory(Base):
+    """Model for storing search results from all 3 tabs (ADS, STUDENTS, TEACHERS)."""
+
+    __tablename__ = "search_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    start_date = Column(String(10), nullable=False, index=True)  # YYYY-MM-DD
+    end_date = Column(String(10), nullable=False, index=True)  # YYYY-MM-DD
+    tab_type = Column(String(20), nullable=False, index=True)  # 'ads', 'students', 'teachers'
+    results_count = Column(Integer, default=0, nullable=False)
+    results_json = Column(Text, nullable=True)  # JSON string with results
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<SearchHistory(id={self.id}, period={self.start_date} - {self.end_date}, tab={self.tab_type}, count={self.results_count})>"

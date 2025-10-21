@@ -381,3 +381,65 @@ export async function getStudentsWithJourney(params?: {
   return r.json()
 }
 
+// Search History API
+export async function saveSearchResults(params: {
+  start_date: string
+  end_date: string
+  tab_type: 'ads' | 'students' | 'teachers'
+  results_data: any[]
+}): Promise<{ success: boolean; search_id: number }> {
+  const r = await fetch(`${API_BASE}/api/save-search-results`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  })
+  if (!r.ok) throw new Error('Failed to save search results')
+  return r.json()
+}
+
+export interface SearchHistoryItem {
+  id: number
+  start_date: string
+  end_date: string
+  tab_type: 'ads' | 'students' | 'teachers'
+  results_count: number
+  created_at: string
+}
+
+export interface SearchHistoryResponse {
+  success: boolean
+  count: number
+  history: SearchHistoryItem[]
+}
+
+export async function getSearchHistory(params?: {
+  limit?: number
+  tab_type?: 'ads' | 'students' | 'teachers'
+}): Promise<SearchHistoryResponse> {
+  const queryParams = new URLSearchParams()
+  if (params?.limit) queryParams.append('limit', String(params.limit))
+  if (params?.tab_type) queryParams.append('tab_type', params.tab_type)
+
+  const url = `${API_BASE}/api/search-history${queryParams.toString() ? '?' + queryParams.toString() : ''}`
+  const r = await fetch(url)
+  if (!r.ok) throw new Error('Failed to load search history')
+  return r.json()
+}
+
+export interface SearchResultsResponse {
+  success: boolean
+  id: number
+  start_date: string
+  end_date: string
+  tab_type: 'ads' | 'students' | 'teachers'
+  results_count: number
+  results: any[]
+  created_at: string
+}
+
+export async function getSearchResults(searchId: number): Promise<SearchResultsResponse> {
+  const r = await fetch(`${API_BASE}/api/search-history/${searchId}`)
+  if (!r.ok) throw new Error('Failed to load search results')
+  return r.json()
+}
+

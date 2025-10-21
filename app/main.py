@@ -34,7 +34,7 @@ from .config_store import get_config_masked, set_config
 from .connectors import crm as crm_conn
 from .middleware.auth import verify_api_key
 from .database import init_db, get_db_session
-from .models import PipelineRun, RunLog, CampaignAnalysisHistory
+from .models import PipelineRun, RunLog, CampaignAnalysisHistory, SearchHistory
 from .analytics_processor import AnalyticsProcessor
 from .services import nethunt_tracking
 from .services import alfacrm_tracking
@@ -700,6 +700,123 @@ async def save_run_history(request: Request, payload: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Error saving run history: {e}")
         return JSONResponse({"error": f"Помилка збереження історії: {str(e)}"}, status_code=500)
+
+
+@app.post("/api/save-search-results")
+@limiter.limit("30/minute")
+async def save_search_results(request: Request, payload: Dict[str, Any]):
+    """
+    Зберігає результати пошуку з усіх 3 вкладок (РЕКЛАМА, СТУДЕНТИ, ВЧИТЕЛИ).
+
+    Args:
+        start_date: YYYY-MM-DD
+        end_date: YYYY-MM-DD
+        tab_type: 'ads', 'students', 'teachers'
+        results_data: масив з результатами пошуку (JSON)
+    """
+    try:
+        import json
+
+        start_date = payload.get("start_date")
+        end_date = payload.get("end_date")
+        tab_type = payload.get("tab_type")
+        results_data = payload.get("results_data", [])
+
+        if not start_date or not end_date:
+            return JSONResponse({"error": "Відсутні start_date або end_date"}, status_code=400)
+
+        if tab_type not in ["ads", "students", "teachers"]:
+            return JSONResponse({"error": "tab_type має бути 'ads', 'students' або 'teachers'"}, status_code=400)
+
+        with get_db() as db:
+            search_record = SearchHistory(
+                start_date=start_date,
+                end_date=end_date,
+                tab_type=tab_type,
+                results_count=len(results_data),
+                results_json=json.dumps(results_data, ensure_ascii=False)
+            )
+            db.add(search_record)
+            db.commit()
+            db.refresh(search_record)
+
+            logger.info(f"Збережено результати пошуку: {tab_type}, період {start_date} - {end_date}, {len(results_data)} записів")
+
+            return {"success": True, "search_id": search_record.id}
+    except Exception as e:
+        logger.error(f"Помилка збереження результатів пошуку: {e}")
+        return JSONResponse({"error": f"Помилка збереження: {str(e)}"}, status_code=500)
+
+
+@app.get("/api/search-history")
+@limiter.limit("30/minute")
+async def get_search_history(request: Request, limit: int = 100, tab_type: str = None):
+    """
+    Отримує історію пошуків.
+
+    Query params:
+        limit: максимальна кількість записів (default: 100)
+        tab_type: фільтр по типу вкладки ('ads', 'students', 'teachers')
+    """
+    try:
+        with get_db() as db:
+            query = db.query(SearchHistory).order_by(SearchHistory.created_at.desc())
+
+            if tab_type:
+                query = query.filter(SearchHistory.tab_type == tab_type)
+
+            results = query.limit(limit).all()
+
+            return {
+                "success": True,
+                "count": len(results),
+                "history": [
+                    {
+                        "id": r.id,
+                        "start_date": r.start_date,
+                        "end_date": r.end_date,
+                        "tab_type": r.tab_type,
+                        "results_count": r.results_count,
+                        "created_at": r.created_at.isoformat() if r.created_at else None
+                    }
+                    for r in results
+                ]
+            }
+    except Exception as e:
+        logger.error(f"Помилка отримання історії пошуків: {e}")
+        return JSONResponse({"error": f"Помилка: {str(e)}"}, status_code=500)
+
+
+@app.get("/api/search-history/{search_id}")
+@limiter.limit("30/minute")
+async def get_search_results(request: Request, search_id: int):
+    """
+    Отримує конкретні результати пошуку по ID.
+    """
+    try:
+        import json
+
+        with get_db() as db:
+            search_record = db.query(SearchHistory).filter(SearchHistory.id == search_id).first()
+
+            if not search_record:
+                return JSONResponse({"error": "Запис не знайдено"}, status_code=404)
+
+            results_data = json.loads(search_record.results_json) if search_record.results_json else []
+
+            return {
+                "success": True,
+                "id": search_record.id,
+                "start_date": search_record.start_date,
+                "end_date": search_record.end_date,
+                "tab_type": search_record.tab_type,
+                "results_count": search_record.results_count,
+                "results": results_data,
+                "created_at": search_record.created_at.isoformat() if search_record.created_at else None
+            }
+    except Exception as e:
+        logger.error(f"Помилка отримання результатів пошуку: {e}")
+        return JSONResponse({"error": f"Помилка: {str(e)}"}, status_code=500)
 
 
 @app.get("/api/meta-data")
