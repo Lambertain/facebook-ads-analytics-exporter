@@ -283,12 +283,17 @@ def track_campaign_leads(
             lead_status_id = student.get("lead_status_id")
 
             if lead_status_id:
-                # ИСПРАВЛЕНО 2025-10-21: Считаем лида только в ТЕКУЩЕМ статусе
-                # Один лид = один столбец (текущий статус)
-                # НЕ создаем кумулятивную воронку (где лид появляется в нескольких столбцах)
-                status_name = ALFACRM_STATUS_MAPPING.get(lead_status_id)
-                if status_name and status_name in status_counts:
-                    status_counts[status_name] += 1
+                # ВОССТАНОВЛЕНО 2025-10-21: Кумулятивная воронка как в NetHunt
+                # ПРИЧИНА: UI ожидает что лиды отображаются на ВСЕХ этапах воронки через которые прошли
+                # Используем inference подход - восстанавливаем путь лида через воронку
+                journey = recover_lead_journey(lead_status_id)
+
+                # Засчитываем лида в КАЖДОМ статусе через который он прошел
+                # Это создает КУМУЛЯТИВНУЮ воронку - стандартное отображение sales funnel
+                for status_id in journey:
+                    status_name = ALFACRM_STATUS_MAPPING.get(status_id)
+                    if status_name and status_name in status_counts:
+                        status_counts[status_name] += 1
             else:
                 # Если нет lead_status_id - считаем как необработанный
                 status_counts["Не розібраний"] += 1
@@ -448,6 +453,8 @@ async def track_leads_by_campaigns(
         enriched_campaigns[campaign_id] = {
             "campaign_id": campaign_data.get("campaign_id"),
             "campaign_name": campaign_data.get("campaign_name"),
+            "budget": campaign_data.get("budget"),  # ИСПРАВЛЕНО 2025-10-21: Добавлено поле budget из Facebook
+            "location": campaign_data.get("location"),  # ИСПРАВЛЕНО 2025-10-21: Добавлено поле location из Facebook
             "leads_count": len(campaign_leads),
             "funnel_stats": funnel_stats
         }
