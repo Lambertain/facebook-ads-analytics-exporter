@@ -283,24 +283,21 @@ def track_campaign_leads(
             lead_status_id = student.get("lead_status_id")
 
             if lead_status_id:
-                # INFERENCE ПОДХОД: Восстанавливаем путь лида через воронку
-                # на основе текущего статуса
-                journey = recover_lead_journey(lead_status_id)
-
-                # Засчитываем лида в КАЖДОМ статусе через который он прошел
-                # Это создает КУМУЛЯТИВНУЮ воронку как в NetHunt
-                for status_id in journey:
-                    status_name = ALFACRM_STATUS_NAMES.get(status_id)
-                    if status_name and status_name in status_counts:
-                        status_counts[status_name] += 1
+                # ИСПРАВЛЕНО 2025-10-21: Считаем лида только в ТЕКУЩЕМ статусе
+                # Один лид = один столбец (текущий статус)
+                # НЕ создаем кумулятивную воронку (где лид появляется в нескольких столбцах)
+                status_name = ALFACRM_STATUS_MAPPING.get(lead_status_id)
+                if status_name and status_name in status_counts:
+                    status_counts[status_name] += 1
             else:
                 # Если нет lead_status_id - считаем как необработанный
                 status_counts["Не розібраний"] += 1
 
         else:
             not_found_count += 1
-            # Лиды которые не найдены в CRM считаем как "Не розібраний"
-            status_counts["Не розібраний"] += 1
+            # Лиды которые НЕ найдены в CRM не добавляются в "Не розібраний"
+            # "Не розібраний" (status_id=13) - это РЕАЛЬНЫЙ статус в AlfaCRM
+            # "not found in CRM" != "Не розібраний"
 
     logger.info(
         f"Campaign tracking: {matched_count} matched, {not_found_count} not found in CRM"
