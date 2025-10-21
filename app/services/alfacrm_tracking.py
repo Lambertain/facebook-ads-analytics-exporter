@@ -294,9 +294,10 @@ def track_campaign_leads(
                     status_name = ALFACRM_STATUS_MAPPING.get(status_id)
                     if status_name and status_name in status_counts:
                         status_counts[status_name] += 1
-            else:
-                # Если нет lead_status_id - считаем как необработанный
-                status_counts["Не розібраний"] += 1
+            # ИСПРАВЛЕНО 2025-10-22: Убрано неправильное добавление в "Не розібраний"
+            # "Не розібраний" (status_id=13) - это РЕАЛЬНЫЙ статус в AlfaCRM
+            # Лиды без lead_status_id не должны попадать в "Не розібраний"
+            # Они будут обработаны через cumulative funnel если lead_status_id=13
 
         else:
             not_found_count += 1
