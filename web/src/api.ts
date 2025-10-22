@@ -189,47 +189,19 @@ export interface MetaStudent {
   trial_completed_from_total_percent: string
   trial_completed_from_scheduled_percent: string
   trial_to_purchase_percent: string
-  // ВСІ 38 СТАТУСІВ ALFACRM для journey відображення
-  // Основна воронка (20 статусів)
-  status_13: number  // Не розібраний
-  status_11: number  // Недодзвон
-  status_10: number  // Недозвон 2
-  status_27: number  // Недозвон 3
-  status_1: number   // Вст контакт невідомо
-  status_32: number  // Вст контакт зацікавлений
-  status_26: number  // Зник після контакту
-  status_12: number  // Розмовляли, чекаємо відповідь
-  status_6: number   // Чекає пробного
-  status_2: number   // Призначено пробне
-  status_3: number   // Проведено пробне
-  status_5: number   // Не відвідав пробне
-  status_9: number   // Чекаємо оплату
-  status_4: number   // Отримана оплата
-  status_29: number  // Сплатить через 2 тижні >
-  status_25: number  // Передзвонити через 2 тижні
-  status_30: number  // Передзвон через місяць
-  status_31: number  // Передзвон 2 місяці і більше
-  status_8: number   // Опрацювати заперечення
-  status_50: number  // Старі клієнти
-  // Вторинна воронка (18 статусів)
-  status_18: number  // Недозвон
-  status_40: number  // Недозвон 2 (дублікат)
-  status_42: number  // недозвон 3
-  status_43: number  // Встан коннт невідомо
-  status_22: number  // Встан контакт зацікавлений
-  status_44: number  // Зник після контакту (дублікат)
-  status_24: number  // Розмовляли чекаємо відповіді
-  status_34: number  // Чекає пробного (дублікат)
-  status_35: number  // Призначено пробне (дублікат)
-  status_37: number  // Проведено пробне (дублікат)
-  status_36: number  // Не відвідав пробне (дублікат)
-  status_38: number  // Чекає оплату (дублікат)
-  status_39: number  // Отримана оплата (дублікат конверсії)
-  status_45: number  // Сплатить через 2 тижні
-  status_46: number  // Передзвонити через 2 тижні (дублікат)
-  status_47: number  // Передз через місяць
-  status_48: number  // Передзвон 2 місяці і більше (дублікат)
-  status_49: number  // Опрацювати заперечення (дублікат)
+  // 11 АГРЕГОВАНИХ СТАТУСІВ ALFACRM (замість 38 окремих)
+  // Синхронізовано з backend AGGREGATED_STATUSES (alfacrm_tracking.py)
+  "Не розібраний": number
+  "Недозвон": number
+  "Встановлено контакт": number
+  "Зник після контакту": number
+  "В опрацюванні": number
+  "Призначено пробне": number      // Cumulative counting
+  "Проведено пробне": number        // Cumulative counting
+  "Чекає оплату": number            // Cumulative counting
+  "Отримана оплата": number
+  "Передзвонити пізніше": number
+  "Старі клієнти": number
 }
 
 export interface MetaTeacher {
