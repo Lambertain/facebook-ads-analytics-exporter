@@ -1141,17 +1141,18 @@ async def get_meta_data(
                 logger.info(f"[DEBUG STUDENTS LOOP {students_data_debug_counter}]   funnel_stats keys: {list(funnel_stats.keys())[:5]}")  # Перші 5 ключів
                 logger.info(f"[DEBUG STUDENTS LOOP {students_data_debug_counter}]   campaign_tracking has data: {bool(campaign_tracking)}")
 
-            # 11 АГРЕГОВАНИХ СТАТУСІВ ALFACRM (синхронізовано з alfacrm_tracking.py)
+            # 10 АГРЕГОВАНИХ СТАТУСІВ ALFACRM (синхронізовано з alfacrm_tracking.py)
             # Замість 38 окремих полів використовуємо агреговані групи
             status_not_processed = funnel_stats.get("Не розібраний", 0)
-            status_no_answer = funnel_stats.get("Недозвон", 0)
-            status_contact = funnel_stats.get("Встановлено контакт", 0)
-            status_lost = funnel_stats.get("Зник після контакту", 0)
-            status_in_progress_agg = funnel_stats.get("В опрацюванні", 0)
-            status_trial_scheduled = funnel_stats.get("Призначено пробне", 0)
-            status_trial_completed = funnel_stats.get("Проведено пробне", 0)
+            status_no_answer = funnel_stats.get("Недозвон (не ЦА)", 0)
+            status_contact = funnel_stats.get("Встановлено контакт (ЦА)", 0)
+            status_in_progress_agg = funnel_stats.get("В опрацюванні (ЦА)", 0)
+            status_trial_scheduled = funnel_stats.get("Призначено пробне (ЦА)", 0)
+            status_trial_completed = funnel_stats.get("Проведено пробне (ЦА)", 0)
             status_waiting_payment = funnel_stats.get("Чекає оплату", 0)
-            status_purchased = funnel_stats.get("Отримана оплата", 0)
+            status_purchased = funnel_stats.get("Отримана оплата (ЦА)", 0)
+            status_archived = funnel_stats.get("Архів (ЦА)", 0)  # Всі архівні ліди за період (custom_ads_comp == 'архів')
+            status_archived_non_target = funnel_stats.get("Архів (не ЦА)", 0)  # = 0 до рішення замовника про класифікацію
             status_callback = funnel_stats.get("Передзвонити пізніше", 0)
             status_old_clients = funnel_stats.get("Старі клієнти", 0)
 
@@ -1172,7 +1173,7 @@ async def get_meta_data(
             percent_target = round((target_leads / leads_count * 100), 2) if leads_count > 0 else 0
             percent_non_target = round((non_target_leads / leads_count * 100), 2) if leads_count > 0 else 0
             percent_contact = round((contact_established / leads_count * 100), 2) if leads_count > 0 else 0
-            percent_conversion = round((purchased / leads_count * 100), 2) if leads_count > 0 else 0
+            percent_conversion = round((purchased / target_leads * 100), 2) if target_leads > 0 else 0  # Y: % конверсія (Купили / Кількість цільових лідів)
             percent_no_answer = round((no_answer / leads_count * 100), 2) if leads_count > 0 else 0
 
             # Розрахунок для пробних уроків
@@ -1184,6 +1185,10 @@ async def get_meta_data(
             # Ціна за ліда
             price_per_lead = round((budget / leads_count), 2) if leads_count > 0 else 0
             price_per_target_lead = round((budget / target_leads), 2) if target_leads > 0 else 0
+
+            # CPC (Cost Per Click) - TODO: отримати з Meta Insights API
+            # Зараз leadgen_forms API не надає spend/clicks, тому = 0
+            cpc = 0.0
 
             students_data.append({
                 "campaign_name": campaign_name,
@@ -1201,9 +1206,9 @@ async def get_meta_data(
                 "trial_completed": trial_completed,
                 "waiting_payment": waiting_payment,
                 "purchased": purchased,
-                "archive": funnel_stats.get("Зник після контакту", 0),
+                "archive": funnel_stats.get("Архів (ЦА)", 0),  # Архівні ліди ЦА (всі архівні за період)
                 "no_answer": no_answer,
-                "archive_non_target": 0,  # TODO: визначити з клієнтом маппінг
+                "archive_non_target": funnel_stats.get("Архів (не ЦА)", 0),  # Архівні ліди не ЦА (= 0 до рішення замовника)
                 "target_leads": target_leads,
                 "non_target_leads": non_target_leads,
                 "percent_target": percent_target,
@@ -1211,7 +1216,7 @@ async def get_meta_data(
                 "percent_contact": percent_contact,
                 "percent_in_progress": round((funnel_stats.get("Розмовляли, чекаємо відповідь", 0) / leads_count * 100), 2) if leads_count > 0 else 0,
                 "percent_conversion": percent_conversion,
-                "percent_archive": round((funnel_stats.get("Зник після контакту", 0) / leads_count * 100), 2) if leads_count > 0 else 0,
+                "percent_archive": round(((funnel_stats.get("Архів (ЦА)", 0) + funnel_stats.get("Архів (не ЦА)", 0)) / leads_count * 100), 2) if leads_count > 0 else 0,
                 "percent_no_answer": percent_no_answer,
                 "price_per_lead": price_per_lead,
                 "price_per_target_lead": price_per_target_lead,
@@ -1220,17 +1225,19 @@ async def get_meta_data(
                 "percent_trial_completed": percent_trial_completed,
                 "percent_trial_conversion": percent_trial_conversion,
                 "conversion_trial_to_sale": conversion_trial_to_sale,
-                # 11 АГРЕГОВАНИХ СТАТУСІВ ALFACRM (замість 38 окремих)
+                "cpc": cpc,  # AI: CPC (Cost Per Click) - TODO: з Meta Insights API
+                # 12 АГРЕГОВАНИХ СТАТУСІВ ALFACRM (замість 38 окремих)
                 # Синхронізовано з backend AGGREGATED_STATUSES (alfacrm_tracking.py)
                 "Не розібраний": status_not_processed,
-                "Недозвон": status_no_answer,
-                "Встановлено контакт": status_contact,
-                "Зник після контакту": status_lost,
-                "В опрацюванні": status_in_progress_agg,
-                "Призначено пробне": status_trial_scheduled,       # Cumulative counting
-                "Проведено пробне": status_trial_completed,        # Cumulative counting
+                "Недозвон (не ЦА)": status_no_answer,
+                "Встановлено контакт (ЦА)": status_contact,
+                "В опрацюванні (ЦА)": status_in_progress_agg,
+                "Призначено пробне (ЦА)": status_trial_scheduled,       # Cumulative counting
+                "Проведено пробне (ЦА)": status_trial_completed,        # Cumulative counting
                 "Чекає оплату": status_waiting_payment,            # Cumulative counting
-                "Отримана оплата": status_purchased,
+                "Отримана оплата (ЦА)": status_purchased,
+                "Архів (ЦА)": status_archived,                    # НОВА КОЛОНКА P
+                "Архів (не ЦА)": status_archived_non_target,       # НОВА КОЛОНКА R
                 "Передзвонити пізніше": status_callback,
                 "Старі клієнти": status_old_clients
             })

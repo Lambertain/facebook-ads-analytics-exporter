@@ -17,23 +17,29 @@ interface StudentsTableProps {
   filterInfo?: any
 }
 
-// Кольори для різних груп колонок
-const COLOR_META = '#ADD8E6'       // Світло-голубий (Meta дані)
-const COLOR_CRM = '#FFB6C1'         // Світло-рожевий (CRM статуси)
-const COLOR_CALC = '#90EE90'        // Світло-зелений (розрахунки)
+// ============ 9 ГРУП COLOR-CODING ЗІ СПЕЦИФІКАЦІЇ ============
+const COLOR_WHITE = '#FFFFFF'           // 1. Біла - A-F основна інформація
+const COLOR_LIGHT_YELLOW = '#FFFFE0'    // 2. Світло-жовта - G кількість лідів + W-AA розрахунки %
+const COLOR_LIGHT_PURPLE = '#E6E6FA'    // 3. Світло-фіолетова - I,J,K,N,O,P CRM статуси + AE-AI метрики
+const COLOR_ORANGE = '#FFA500'          // 4. Оранжева - L,M пробні (ЦА)
+const COLOR_LIGHT_PINK = '#FFB6C1'      // 5. Світло-рожева - Q,R не ЦА + T кількість не цільових
+const COLOR_LIGHT_GREEN = '#90EE90'     // 6. Світло-зелена - S,U,V цільові ліди
+const COLOR_LIGHT_ORANGE = '#FFE4B5'    // 7. Світло-оранжева - AB,AC фінанси
+const COLOR_BRIGHT_YELLOW = '#FFFF00'   // 8. Ярко-жовта - AD нотатки
 
-// 11 агрегованих статусів AlfaCRM (замість 38 окремих)
+// 12 агрегованих статусів AlfaCRM (замість 38 окремих)
 // Синхронізовано з backend AGGREGATED_STATUSES (alfacrm_tracking.py)
 const AGGREGATED_STATUS_COLUMNS = [
   { key: 'Не розібраний', label: 'Не розібраний' },
-  { key: 'Недозвон', label: 'Недозвон' },
-  { key: 'Встановлено контакт', label: 'Встановлено контакт' },
-  { key: 'Зник після контакту', label: 'Зник після контакту' },
-  { key: 'В опрацюванні', label: 'В опрацюванні' },
-  { key: 'Призначено пробне', label: 'Призначено пробне' },      // Cumulative counting
-  { key: 'Проведено пробне', label: 'Проведено пробне' },        // Cumulative counting
+  { key: 'Встановлено контакт (ЦА)', label: 'Встановлено контакт (ЦА)' },
+  { key: 'В опрацюванні (ЦА)', label: 'В опрацюванні (ЦА)' },
+  { key: 'Призначено пробне (ЦА)', label: 'Призначено пробне (ЦА)' },      // Cumulative counting
+  { key: 'Проведено пробне (ЦА)', label: 'Проведено пробне (ЦА)' },        // Cumulative counting
   { key: 'Чекає оплату', label: 'Чекає оплату' },                // Cumulative counting
-  { key: 'Отримана оплата', label: 'Отримана оплата' },
+  { key: 'Отримана оплата (ЦА)', label: 'Отримана оплата (ЦА)' },
+  { key: 'Архів (ЦА)', label: 'Архів (ЦА)' },                    // НОВА КОЛОНКА P
+  { key: 'Недозвон (не ЦА)', label: 'Недозвон (не ЦА)' },
+  { key: 'Архів (не ЦА)', label: 'Архів (не ЦА)' },              // НОВА КОЛОНКА R
   { key: 'Передзвонити пізніше', label: 'Передзвонити пізніше' },
   { key: 'Старі клієнти', label: 'Старі клієнти' }
 ] as const

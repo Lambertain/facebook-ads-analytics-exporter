@@ -154,52 +154,62 @@ export interface MetaAd {
   in_progress_percent: string
 }
 
+// СТРУКТУРА ТАБЛИЦІ: 35 КОЛОНОК A-AI + 2 ДОДАТКОВІ CRM СТАТУСИ
+// Порядок відповідає специфікації "Анализ РК Студенти - Структура таблицы.md"
 export interface MetaStudent {
-  campaign_name: string
-  campaign_link: string
-  analysis_date: string
-  period: string
-  budget: number
-  location: string
-  leads_count: string
-  leads_check: string
-  not_processed: string
-  contacted: string
-  in_progress: string
-  trial_scheduled: string
-  trial_completed: string
-  awaiting_payment: string
-  purchased: string
-  archived: string
-  not_reached: string
-  archived_non_target: string
-  target_leads: string
-  non_target_leads: string
-  target_percent: string
-  non_target_percent: string
-  contact_percent: string
-  in_progress_percent: string
-  conversion_percent: string
-  archive_percent: string
-  not_reached_percent: string
-  cost_per_lead: string
-  cost_per_target_lead: string
-  notes: string
-  trial_scheduled_percent: string
-  trial_completed_from_total_percent: string
-  trial_completed_from_scheduled_percent: string
-  trial_to_purchase_percent: string
-  // 11 АГРЕГОВАНИХ СТАТУСІВ ALFACRM (замість 38 окремих)
-  // Синхронізовано з backend AGGREGATED_STATUSES (alfacrm_tracking.py)
-  "Не розібраний": number
-  "Недозвон": number
-  "Встановлено контакт": number
-  "Зник після контакту": number
-  "В опрацюванні": number
-  "Призначено пробне": number      // Cumulative counting
-  "Проведено пробне": number        // Cumulative counting
-  "Чекає оплату": number            // Cumulative counting
-  "Отримана оплата": number
+  // ============ ОСНОВНА ІНФОРМАЦІЯ (A-F) - біла заливка ============
+  campaign_name: string                      // A: Назва РК
+  campaign_link: string                      // B: Посилання на РК
+  analysis_date: string                      // C: Дата аналізу
+  period: string                             // D: Період аналізу запущеної компанії
+  budget: number                             // E: Витрачений бюджет в $
+  location: string                           // F: Місце знаходження (країни чи міста)
+
+  // ============ ДАНІ ПО ЛІДАМ (G) - світло-жовта заливка ============
+  leads_count: string                        // G: Кількість лідів
+
+  // ============ CRM СТАТУСИ (I-R) - світло-фіолетова/оранжева/світло-рожева ============
+  "Не розібраний": number                    // I (світло-фіолетова)
+  "Встановлено контакт (ЦА)": number         // J (світло-фіолетова)
+  "В опрацюванні (ЦА)": number               // K (світло-фіолетова)
+  "Призначено пробне (ЦА)": number           // L (оранжева) - Cumulative counting
+  "Проведено пробне (ЦА)": number            // M (оранжева) - Cumulative counting
+  "Чекає оплату": number                     // N (світло-фіолетова) - Cumulative counting
+  "Отримана оплата (ЦА)": number             // O (світло-фіолетова)
+  "Архів (ЦА)": number                       // P (світло-фіолетова)
+  "Недозвон (не ЦА)": number                 // Q (світло-рожева)
+  "Архів (не ЦА)": number                    // R (світло-рожева)
+
+  // ============ РОЗРАХУНКОВІ МЕТРИКИ - КІЛЬКІСТЬ (S-T) ============
+  target_leads: string                       // S: Кількість цільових лідів (світло-зелена)
+  non_target_leads: string                   // T: Кількість не цільових лідів (світло-рожева)
+
+  // ============ РОЗРАХУНКОВІ МЕТРИКИ - ВІДСОТКИ (U-AA) - світло-зелена/світло-жовта ============
+  target_percent: string                     // U: % цільових лідів (світло-зелена)
+  non_target_percent: string                 // V: % не цільових лідів (світло-зелена)
+  contact_percent: string                    // W: % Встан. контакт (світло-жовта)
+  in_progress_percent: string                // X: % В опрацюванні (ЦА) (світло-жовта)
+  conversion_percent: string                 // Y: % конверсія (світло-жовта)
+  archive_percent: string                    // Z: % архів (світло-жовта)
+  not_reached_percent: string                // AA: % недозвон (світло-жовта)
+
+  // ============ ФІНАНСОВІ ПОКАЗНИКИ (AB-AC) - світло-оранжева заливка ============
+  cost_per_lead: string                      // AB: Ціна / ліда
+  cost_per_target_lead: string               // AC: Ціна / цільового ліда
+
+  // ============ ДОДАТКОВА ІНФОРМАЦІЯ (AD) - ярко-жовта заливка ============
+  notes: string                              // AD: Нотатки
+
+  // ============ ДОДАТКОВІ МЕТРИКИ ПРОБНИХ (AE-AH) - світло-фіолетова заливка ============
+  trial_scheduled_percent: string            // AE: % Назначений пробний
+  trial_completed_from_total_percent: string // AF: % Проведений пробний від загальних лідів
+  trial_completed_from_scheduled_percent: string // AG: % Проведений пробний від назначених пробних
+  trial_to_purchase_percent: string          // AH: Конверсія з проведеного пробного в продаж
+
+  // ============ CPC (AI) - світло-фіолетова заливка ============
+  cpc: number                                // AI: CPC (Cost Per Click)
+
+  // ============ ДОДАТКОВІ CRM СТАТУСИ (поза A-AI) ============
   "Передзвонити пізніше": number
   "Старі клієнти": number
 }
