@@ -27,24 +27,9 @@ const COLOR_LIGHT_GREEN = '#90EE90'     // 6. Світло-зелена - S,U,V 
 const COLOR_LIGHT_ORANGE = '#FFE4B5'    // 7. Світло-оранжева - AB,AC фінанси
 const COLOR_BRIGHT_YELLOW = '#FFFF00'   // 8. Ярко-жовта - AD нотатки
 
-// 12 агрегованих статусів AlfaCRM (замість 38 окремих)
+// ============ 12 АГРЕГОВАНИХ СТАТУСІВ ALFACRM ============
 // Синхронізовано з backend AGGREGATED_STATUSES (alfacrm_tracking.py)
-const AGGREGATED_STATUS_COLUMNS = [
-  { key: 'Не розібраний', label: 'Не розібраний' },
-  { key: 'Встановлено контакт (ЦА)', label: 'Встановлено контакт (ЦА)' },
-  { key: 'В опрацюванні (ЦА)', label: 'В опрацюванні (ЦА)' },
-  { key: 'Призначено пробне (ЦА)', label: 'Призначено пробне (ЦА)' },      // Cumulative counting
-  { key: 'Проведено пробне (ЦА)', label: 'Проведено пробне (ЦА)' },        // Cumulative counting
-  { key: 'Чекає оплату', label: 'Чекає оплату' },                // Cumulative counting
-  { key: 'Отримана оплата (ЦА)', label: 'Отримана оплата (ЦА)' },
-  { key: 'Архів (ЦА)', label: 'Архів (ЦА)' },                    // НОВА КОЛОНКА P
-  { key: 'Недозвон (не ЦА)', label: 'Недозвон (не ЦА)' },
-  { key: 'Архів (не ЦА)', label: 'Архів (не ЦА)' },              // НОВА КОЛОНКА R
-  { key: 'Передзвонити пізніше', label: 'Передзвонити пізніше' },
-  { key: 'Старі клієнти', label: 'Старі клієнти' }
-] as const
-
-const ALL_STATUS_COLUMNS = AGGREGATED_STATUS_COLUMNS
+// Порядок столбців I-R + додаткові статуси згідно зі специфікацією
 
 export default function StudentsTable({ students, filterInfo }: StudentsTableProps) {
   // Отримуємо повідомлення з filter_info або використовуємо fallback
@@ -81,37 +66,64 @@ export default function StudentsTable({ students, filterInfo }: StudentsTablePro
         <Table stickyHeader size="small">
           <TableHead>
             <TableRow>
-              {/* Група 1: Meta дані (світло-голубий) */}
-              <TableCell sx={{ backgroundColor: COLOR_META, fontWeight: 'bold' }}>Назва кампанії</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_META }}>Дата аналізу</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_META }}>Період аналізу</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_META }}>Бюджет ($)</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_META }}>Локація</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_META }}>Кількість лідів</TableCell>
+              {/* A-F: Основна інформація (біла заливка) */}
+              <TableCell sx={{ backgroundColor: COLOR_WHITE, fontWeight: 'bold' }}>Назва кампанії</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_WHITE }}>Дата аналізу</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_WHITE }}>Період аналізу</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_WHITE }}>Бюджет ($)</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_WHITE }}>Локація</TableCell>
 
-              {/* Група 2: 38 CRM статусів (світло-рожевий) */}
-              {ALL_STATUS_COLUMNS.map(col => (
-                <TableCell key={col.key} sx={{ backgroundColor: COLOR_CRM, fontWeight: 'bold' }}>
-                  {col.label}
-                </TableCell>
-              ))}
+              {/* G: Кількість лідів (світло-жовта заливка) */}
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_YELLOW, fontWeight: 'bold' }}>Кількість лідів</TableCell>
 
-              {/* Група 3: Розрахунки (світло-зелений) */}
-              <TableCell sx={{ backgroundColor: COLOR_CALC }}>% цільових</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_CALC }}>% нецільових</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_CALC }}>% контакт</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_CALC }}>% конверсія</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_CALC }}>Ціна/ліда</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_CALC }}>Ціна/цільового</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_CALC }}>% пробний призначено</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_CALC }}>% пробний проведено</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_CALC }}>% пробний → продаж</TableCell>
+              {/* I-R: CRM статуси (різна заливка) */}
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>Не розібраний</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>Встановлено контакт (ЦА)</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>В опрацюванні (ЦА)</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_ORANGE, fontWeight: 'bold' }}>Призначено пробне (ЦА)</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_ORANGE, fontWeight: 'bold' }}>Проведено пробне (ЦА)</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>Чекає оплату</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>Отримана оплата (ЦА)</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>Архів (ЦА)</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PINK, fontWeight: 'bold' }}>Недозвон (не ЦА)</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PINK, fontWeight: 'bold' }}>Архів (не ЦА)</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>Передзвонити пізніше</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>Старі клієнти</TableCell>
+
+              {/* S-T: Кількість (розрахунки) */}
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_GREEN }}>Кількість цільових лідів</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PINK }}>Кількість не цільових лідів</TableCell>
+
+              {/* U-AA: Відсотки (розрахунки) */}
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_GREEN }}>% цільових лідів</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_GREEN }}>% не цільових лідів</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_YELLOW }}>% Встан. контакт</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_YELLOW }}>% В опрацюванні (ЦА)</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_YELLOW }}>% конверсія</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_YELLOW }}>% архів</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_YELLOW }}>% недозвон</TableCell>
+
+              {/* AB-AC: Фінансові показники (світло-оранжева заливка) */}
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_ORANGE }}>Ціна / ліда</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_ORANGE }}>Ціна / цільового ліда</TableCell>
+
+              {/* AD: Нотатки (яскраво-жовта заливка) */}
+              <TableCell sx={{ backgroundColor: COLOR_BRIGHT_YELLOW }}>Нотатки</TableCell>
+
+              {/* AE-AH: Додаткові метрики пробних (світло-фіолетова заливка) */}
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE }}>% Назначений пробний</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE }}>% Проведений пробний від загальних лідів</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE }}>% Проведений пробний від назначених</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE }}>Конверсія з пробного в продаж</TableCell>
+
+              {/* AI: CPC (світло-фіолетова заливка) */}
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE }}>CPC</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {students.map((s, idx) => (
               <TableRow key={idx} hover>
-                {/* Meta дані */}
+                {/* A-F: Основна інформація */}
                 <TableCell>
                   <Link
                     href={s.campaign_link}
@@ -126,25 +138,52 @@ export default function StudentsTable({ students, filterInfo }: StudentsTablePro
                 <TableCell>{s.period}</TableCell>
                 <TableCell>{s.budget}</TableCell>
                 <TableCell>{s.location}</TableCell>
+
+                {/* G: Кількість лідів */}
                 <TableCell>{s.leads_count}</TableCell>
 
-                {/* 11 агрегованих CRM статусів */}
-                {ALL_STATUS_COLUMNS.map(col => (
-                  <TableCell key={col.key}>
-                    {s[col.key as keyof MetaStudent] || 0}
-                  </TableCell>
-                ))}
+                {/* I-R: CRM статуси */}
+                <TableCell>{s["Не розібраний"] || 0}</TableCell>
+                <TableCell>{s["Встановлено контакт (ЦА)"] || 0}</TableCell>
+                <TableCell>{s["В опрацюванні (ЦА)"] || 0}</TableCell>
+                <TableCell>{s["Призначено пробне (ЦА)"] || 0}</TableCell>
+                <TableCell>{s["Проведено пробне (ЦА)"] || 0}</TableCell>
+                <TableCell>{s["Чекає оплату"] || 0}</TableCell>
+                <TableCell>{s["Отримана оплата (ЦА)"] || 0}</TableCell>
+                <TableCell>{s["Архів (ЦА)"] || 0}</TableCell>
+                <TableCell>{s["Недозвон (не ЦА)"] || 0}</TableCell>
+                <TableCell>{s["Архів (не ЦА)"] || 0}</TableCell>
+                <TableCell>{s["Передзвонити пізніше"] || 0}</TableCell>
+                <TableCell>{s["Старі клієнти"] || 0}</TableCell>
 
-                {/* Розрахунки */}
-                <TableCell>{s.target_percent}</TableCell>
-                <TableCell>{s.non_target_percent}</TableCell>
-                <TableCell>{s.contact_percent}</TableCell>
-                <TableCell>{s.conversion_percent}</TableCell>
-                <TableCell>{s.cost_per_lead}</TableCell>
-                <TableCell>{s.cost_per_target_lead}</TableCell>
-                <TableCell>{s.trial_scheduled_percent}</TableCell>
-                <TableCell>{s.trial_completed_from_total_percent}</TableCell>
-                <TableCell>{s.trial_to_purchase_percent}</TableCell>
+                {/* S-T: Кількість (розрахунки) */}
+                <TableCell>{s.target_leads || 0}</TableCell>
+                <TableCell>{s.non_target_leads || 0}</TableCell>
+
+                {/* U-AA: Відсотки (розрахунки) */}
+                <TableCell>{s.percent_target || 0}</TableCell>
+                <TableCell>{s.percent_non_target || 0}</TableCell>
+                <TableCell>{s.percent_contact || 0}</TableCell>
+                <TableCell>{s.percent_in_progress || 0}</TableCell>
+                <TableCell>{s.percent_conversion || 0}</TableCell>
+                <TableCell>{s.percent_archive || 0}</TableCell>
+                <TableCell>{s.percent_no_answer || 0}</TableCell>
+
+                {/* AB-AC: Фінансові показники */}
+                <TableCell>{s.price_per_lead || 0}</TableCell>
+                <TableCell>{s.price_per_target_lead || 0}</TableCell>
+
+                {/* AD: Нотатки */}
+                <TableCell>{s.notes || ""}</TableCell>
+
+                {/* AE-AH: Додаткові метрики пробних */}
+                <TableCell>{s.percent_trial_scheduled || 0}</TableCell>
+                <TableCell>{s.percent_trial_completed || 0}</TableCell>
+                <TableCell>{s.percent_trial_conversion || 0}</TableCell>
+                <TableCell>{s.conversion_trial_to_sale || 0}</TableCell>
+
+                {/* AI: CPC */}
+                <TableCell>{s.cpc || 0}</TableCell>
               </TableRow>
             ))}
           </TableBody>

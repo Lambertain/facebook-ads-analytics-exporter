@@ -185,29 +185,29 @@ export interface MetaStudent {
   non_target_leads: string                   // T: Кількість не цільових лідів (світло-рожева)
 
   // ============ РОЗРАХУНКОВІ МЕТРИКИ - ВІДСОТКИ (U-AA) - світло-зелена/світло-жовта ============
-  target_percent: string                     // U: % цільових лідів (світло-зелена)
-  non_target_percent: string                 // V: % не цільових лідів (світло-зелена)
-  contact_percent: string                    // W: % Встан. контакт (світло-жовта)
-  in_progress_percent: string                // X: % В опрацюванні (ЦА) (світло-жовта)
-  conversion_percent: string                 // Y: % конверсія (світло-жовта)
-  archive_percent: string                    // Z: % архів (світло-жовта)
-  not_reached_percent: string                // AA: % недозвон (світло-жовта)
+  percent_target: string                     // U: % цільових лідів (світло-зелена) [backend: percent_target]
+  percent_non_target: string                 // V: % не цільових лідів (світло-зелена) [backend: percent_non_target]
+  percent_contact: string                    // W: % Встан. контакт (світло-жовта) [backend: percent_contact]
+  percent_in_progress: string                // X: % В опрацюванні (ЦА) (світло-жовта) [backend: percent_in_progress]
+  percent_conversion: string                 // Y: % конверсія (світло-жовта) [backend: percent_conversion]
+  percent_archive: string                    // Z: % архів (світло-жовта) [backend: percent_archive]
+  percent_no_answer: string                  // AA: % недозвон (світло-жовта) [backend: percent_no_answer]
 
   // ============ ФІНАНСОВІ ПОКАЗНИКИ (AB-AC) - світло-оранжева заливка ============
-  cost_per_lead: string                      // AB: Ціна / ліда
-  cost_per_target_lead: string               // AC: Ціна / цільового ліда
+  price_per_lead: string                     // AB: Ціна / ліда [backend: price_per_lead]
+  price_per_target_lead: string              // AC: Ціна / цільового ліда [backend: price_per_target_lead]
 
   // ============ ДОДАТКОВА ІНФОРМАЦІЯ (AD) - ярко-жовта заливка ============
-  notes: string                              // AD: Нотатки
+  notes: string                              // AD: Нотатки [backend: notes]
 
   // ============ ДОДАТКОВІ МЕТРИКИ ПРОБНИХ (AE-AH) - світло-фіолетова заливка ============
-  trial_scheduled_percent: string            // AE: % Назначений пробний
-  trial_completed_from_total_percent: string // AF: % Проведений пробний від загальних лідів
-  trial_completed_from_scheduled_percent: string // AG: % Проведений пробний від назначених пробних
-  trial_to_purchase_percent: string          // AH: Конверсія з проведеного пробного в продаж
+  percent_trial_scheduled: string            // AE: % Назначений пробний [backend: percent_trial_scheduled]
+  percent_trial_completed: string            // AF: % Проведений пробний від загальних лідів [backend: percent_trial_completed]
+  percent_trial_conversion: string           // AG: % Проведений пробний від назначених [backend: percent_trial_conversion]
+  conversion_trial_to_sale: string           // AH: Конверсія з проведеного пробного в продаж [backend: conversion_trial_to_sale]
 
   // ============ CPC (AI) - світло-фіолетова заливка ============
-  cpc: number                                // AI: CPC (Cost Per Click)
+  cpc: number                                // AI: CPC (Cost Per Click) [backend: cpc]
 
   // ============ ДОДАТКОВІ CRM СТАТУСИ (поза A-AI) ============
   "Передзвонити пізніше": number
