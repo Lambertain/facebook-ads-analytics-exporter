@@ -1166,8 +1166,19 @@ async def get_meta_data(
             no_answer = status_no_answer
 
             # Цільові/нецільові
-            target_leads = contact_established  # Всі хто встановив контакт і зацікавлені
-            non_target_leads = not_processed + no_answer  # Необроблені + недзвони
+            # ВИПРАВЛЕНО: target_leads = ВСІ крім "Не розібраний" та "Недозвон (не ЦА)"
+            target_leads = (
+                status_contact +              # Встановлено контакт (ЦА)
+                status_in_progress_agg +       # В опрацюванні (ЦА)
+                status_trial_scheduled +       # Призначено пробне (ЦА) - cumulative
+                status_trial_completed +       # Проведено пробне (ЦА) - cumulative
+                status_waiting_payment +       # Чекає оплату - cumulative
+                status_purchased +             # Отримана оплата (ЦА)
+                status_archived +              # Архів (ЦА)
+                status_callback +              # Передзвонити пізніше
+                status_old_clients             # Старі клієнти
+            )
+            non_target_leads = not_processed + no_answer  # Необроблені + недзвони (не ЦА)
 
             # Розрахунок відсотків
             percent_target = round((target_leads / leads_count * 100), 2) if leads_count > 0 else 0

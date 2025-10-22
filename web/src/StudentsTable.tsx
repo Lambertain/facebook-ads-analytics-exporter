@@ -87,8 +87,6 @@ export default function StudentsTable({ students, filterInfo }: StudentsTablePro
               <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>Архів (ЦА)</TableCell>
               <TableCell sx={{ backgroundColor: COLOR_LIGHT_PINK, fontWeight: 'bold' }}>Недозвон (не ЦА)</TableCell>
               <TableCell sx={{ backgroundColor: COLOR_LIGHT_PINK, fontWeight: 'bold' }}>Архів (не ЦА)</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>Передзвонити пізніше</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>Старі клієнти</TableCell>
 
               {/* S-T: Кількість (розрахунки) */}
               <TableCell sx={{ backgroundColor: COLOR_LIGHT_GREEN }}>Кількість цільових лідів</TableCell>
@@ -153,8 +151,6 @@ export default function StudentsTable({ students, filterInfo }: StudentsTablePro
                 <TableCell>{s["Архів (ЦА)"] || 0}</TableCell>
                 <TableCell>{s["Недозвон (не ЦА)"] || 0}</TableCell>
                 <TableCell>{s["Архів (не ЦА)"] || 0}</TableCell>
-                <TableCell>{s["Передзвонити пізніше"] || 0}</TableCell>
-                <TableCell>{s["Старі клієнти"] || 0}</TableCell>
 
                 {/* S-T: Кількість (розрахунки) */}
                 <TableCell>{s.target_leads || 0}</TableCell>

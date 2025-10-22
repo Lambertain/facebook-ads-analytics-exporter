@@ -208,10 +208,6 @@ export interface MetaStudent {
 
   // ============ CPC (AI) - світло-фіолетова заливка ============
   cpc: number                                // AI: CPC (Cost Per Click) [backend: cpc]
-
-  // ============ ДОДАТКОВІ CRM СТАТУСИ (поза A-AI) ============
-  "Передзвонити пізніше": number
-  "Старі клієнти": number
 }
 
 export interface MetaTeacher {
