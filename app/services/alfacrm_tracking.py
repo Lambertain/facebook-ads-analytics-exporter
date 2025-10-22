@@ -341,6 +341,10 @@ def track_campaign_leads(
                     if aggregated_group in TRIAL_FUNNEL_HIERARCHY:
                         # Trial funnel: сохраняем для cumulative counting
                         trial_funnel_levels[aggregated_group].append(student)
+                        # ДОДАНО 2025-10-23: trial funnel статуси ТАКОЖ рахуються в "В опрацюванні (ЦА)"
+                        # Подвійна логіка: вони попадають І в trial funnel cumulative І в "В опрацюванні"
+                        if "В опрацюванні (ЦА)" in status_counts:
+                            status_counts["В опрацюванні (ЦА)"] += 1
                     else:
                         # Не trial funnel: simple counting (current-status-only)
                         if aggregated_group in status_counts:

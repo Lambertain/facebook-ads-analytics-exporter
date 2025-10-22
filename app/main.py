@@ -925,6 +925,42 @@ async def get_meta_data(
                     break
             insight["leads_count_fb"] = leads_count
 
+        # ДОДАНО 2025-10-23: Створюємо lookup insights по campaign_id для студентів
+        # Агрегуємо ad-level insights → campaign-level для використання в student_campaigns
+        insights_by_campaign = {}
+        for insight in insights:
+            campaign_id = insight.get("campaign_id")
+            if not campaign_id:
+                continue
+
+            # Ініціалізуємо запис для кампанії якщо ще немає
+            if campaign_id not in insights_by_campaign:
+                insights_by_campaign[campaign_id] = {
+                    "spend": 0.0,
+                    "location": "",
+                    "cpc": 0.0,
+                    "clicks": 0
+                }
+
+            # Агрегуємо spend (сума по всім ads кампанії)
+            insights_by_campaign[campaign_id]["spend"] += float(insight.get("spend", 0))
+
+            # Location - беремо перший непустий
+            if not insights_by_campaign[campaign_id]["location"] and insight.get("location"):
+                insights_by_campaign[campaign_id]["location"] = insight.get("location")
+
+            # Для CPC потрібно: total_spend / total_clicks
+            insights_by_campaign[campaign_id]["clicks"] += int(insight.get("clicks", 0))
+
+        # Розраховуємо CPC для кожної кампанії
+        for campaign_id, data in insights_by_campaign.items():
+            if data["clicks"] > 0:
+                data["cpc"] = round(data["spend"] / data["clicks"], 2)
+            else:
+                data["cpc"] = 0.0
+
+        logger.info(f"Created insights lookup for {len(insights_by_campaign)} campaigns")
+
         # 4) Формируем данные для вкладки РЕКЛАМА з інтеграцією AlfaCRM tracking
         ads_data = []
 
@@ -1129,8 +1165,11 @@ async def get_meta_data(
             leads_count = int(funnel_stats.get("Кількість лідів", 0)) if funnel_stats.get("Кількість лідів") else 0
             # Кількість лідів з Facebook (з leadgen_forms API)
             leads_count_fb = len(campaign_data.get("leads", []))
-            # Budget немає в leadgen_forms API (тільки в insights), ставимо 0
-            budget = 0.0
+
+            # ВИПРАВЛЕНО 2025-10-23: Отримуємо budget, location, CPC з Meta Insights API
+            campaign_insights = insights_by_campaign.get(campaign_id, {})
+            budget = float(campaign_insights.get("spend", 0.0))
+            location = campaign_insights.get("location", "")
 
             # DEBUG: Показати дані першої кампанії для діагностики
             students_data_debug_counter += 1
@@ -1197,9 +1236,8 @@ async def get_meta_data(
             price_per_lead = round((budget / leads_count), 2) if leads_count > 0 else 0
             price_per_target_lead = round((budget / target_leads), 2) if target_leads > 0 else 0
 
-            # CPC (Cost Per Click) - TODO: отримати з Meta Insights API
-            # Зараз leadgen_forms API не надає spend/clicks, тому = 0
-            cpc = 0.0
+            # ВИПРАВЛЕНО 2025-10-23: CPC отримується з Meta Insights API
+            cpc = float(campaign_insights.get("cpc", 0.0))
 
             students_data.append({
                 "campaign_name": campaign_name,
@@ -1207,7 +1245,7 @@ async def get_meta_data(
                 "analysis_date": datetime.now().strftime("%Y-%m-%d"),
                 "period": f"{start_date} - {end_date}",
                 "budget": budget,
-                "location": campaign_data.get("location", ""),  # Локація з таргетингу Facebook
+                "location": location,  # ВИПРАВЛЕНО 2025-10-23: Локація з Meta Insights API
                 "leads_count": leads_count_fb,  # Кількість лідів з Facebook API (з leadgen_forms)
                 "leads_check": leads_count,  # Дублюємо для сумісності
                 "not_processed": not_processed,
