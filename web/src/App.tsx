@@ -635,7 +635,6 @@ export default function App() {
                         <TableCell>Витрачений бюджет в $</TableCell>
                         <TableCell>Місце знаходження (країни чи міста)</TableCell>
                         <TableCell>Кількість лідів</TableCell>
-                        <TableCell>Кількість лідів перевірка</TableCell>
                         <TableCell>Не розібрані ліди (в процесі опрацювання)</TableCell>
                         <TableCell>Взяті в роботу (в процесі опрацювання)</TableCell>
                         <TableCell>Контакт (в процесі опрацювання) ЦА</TableCell>
@@ -698,7 +697,6 @@ export default function App() {
                         <TableCell>{row.budget}</TableCell>
                         <TableCell>{row.location}</TableCell>
                         <TableCell>{row.leads_count}</TableCell>
-                        <TableCell>{row.leads_check}</TableCell>
                         <TableCell>{row.not_processed}</TableCell>
                         <TableCell>{row.contacted}</TableCell>
                         <TableCell>{row.contacted}</TableCell>

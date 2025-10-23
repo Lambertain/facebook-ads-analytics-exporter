@@ -1243,7 +1243,6 @@ async def get_meta_data(
                 "budget": budget,
                 "location": location,  # ВИПРАВЛЕНО 2025-10-23: Локація з Meta Insights API
                 "leads_count": leads_count_fb,  # Кількість лідів з Facebook API (з leadgen_forms)
-                "leads_check": leads_count,  # Дублюємо для сумісності
                 "not_processed": not_processed,
                 "contact_established": contact_established,
                 "in_progress": funnel_stats.get("Розмовляли, чекаємо відповідь", 0),
@@ -1784,7 +1783,7 @@ def _get_column_metadata() -> Dict[str, Dict[str, str]]:
         "not_processed", "contact_established", "in_progress",
         "trial_scheduled", "trial_completed", "waiting_payment",
         "purchased", "archive", "no_answer", "archive_non_target",
-        "leads_count", "leads_check"
+        "leads_count"
     }
     students_formula = {
         "target_leads", "non_target_leads", "percent_target", "percent_non_target",
@@ -1879,7 +1878,7 @@ def _apply_column_color_coding(ws, headers, data_type="students"):
             "not_processed", "contact_established", "in_progress",
             "trial_scheduled", "trial_completed", "waiting_payment",
             "purchased", "archive", "no_answer", "archive_non_target",
-            "leads_count", "leads_check",
+            "leads_count",
             # ВСІ 38 СТАТУСІВ ALFACRM для journey відображення
             # Основна воронка (20 статусів)
             "status_13", "status_11", "status_10", "status_27", "status_1",

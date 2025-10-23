@@ -218,7 +218,6 @@ export interface MetaTeacher {
   budget: number
   location: string
   leads_count: string
-  leads_check: string
   not_processed: string
   contacted: string
   in_progress: string
