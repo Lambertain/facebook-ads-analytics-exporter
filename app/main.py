@@ -1205,17 +1205,13 @@ async def get_meta_data(
             no_answer = status_no_answer
 
             # Цільові/нецільові
-            # ВИПРАВЛЕНО: target_leads = ВСІ крім "Не розібраний" та "Недозвон (не ЦА)"
+            # S = J + K + N + O + P (згідно зі специфікацією рядок 31)
             target_leads = (
-                status_contact +              # Встановлено контакт (ЦА)
-                status_in_progress_agg +       # В опрацюванні (ЦА)
-                status_trial_scheduled +       # Призначено пробне (ЦА) - cumulative
-                status_trial_completed +       # Проведено пробне (ЦА) - cumulative
-                status_waiting_payment +       # Чекає оплату - cumulative
-                status_purchased +             # Отримана оплата (ЦА)
-                status_archived +              # Архів (ЦА)
-                status_callback +              # Передзвонити пізніше
-                status_old_clients             # Старі клієнти
+                status_contact +              # J - Встановлено контакт (ЦА)
+                status_in_progress_agg +      # K - В опрацюванні (ЦА)
+                status_waiting_payment +      # N - Чекає оплату
+                status_purchased +            # O - Отримана оплата (ЦА)
+                status_archived               # P - Архів (ЦА)
             )
             non_target_leads = not_processed + no_answer  # Необроблені + недзвони (не ЦА)
 
