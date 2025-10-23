@@ -1245,7 +1245,7 @@ async def get_meta_data(
                 "leads_count": leads_count_fb,  # Кількість лідів з Facebook API (з leadgen_forms)
                 "not_processed": not_processed,
                 "contact_established": contact_established,
-                "in_progress": funnel_stats.get("Розмовляли, чекаємо відповідь", 0),
+                "in_progress": status_in_progress_agg,  # K: В опрацюванні (ЦА) - використовуємо агреговане значення (спец. рядок 21)
                 "trial_scheduled": trial_scheduled,
                 "trial_completed": trial_completed,
                 "waiting_payment": waiting_payment,
