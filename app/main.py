@@ -100,6 +100,111 @@ progress = ProgressStore()
 WEB_DIST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "dist")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 
+# Маппінг англійських назв колонок на українські для Excel експорту
+# Вкладка "Студенти" - згідно зі специфікацією A-AI (35 колонок)
+STUDENTS_COLUMN_NAMES = {
+    "campaign_name": "Назва РК",
+    "campaign_link": "Посилання на РК",
+    "analysis_date": "Дата аналізу",
+    "period": "Період аналізу",
+    "budget": "Витрачений бюджет в $",
+    "location": "Місце знаходження",
+    "leads_count": "Кількість лідів",
+    "Не розібраний": "Не розібрані",
+    "Встановлено контакт (ЦА)": "Встанов. контакт (ЦА)",
+    "В опрацюванні (ЦА)": "В опрацюванні (ЦА)",
+    "Призначено пробне (ЦА)": "Назначений пробний (ЦА)",
+    "Проведено пробне (ЦА)": "Проведений пробний (ЦА)",
+    "Чекає оплату": "Чекаємо оплату",
+    "Отримана оплата (ЦА)": "Купили (ЦА)",
+    "Архів (ЦА)": "Архів (ЦА)",
+    "Недозвон (не ЦА)": "Недозвон (не ЦА)",
+    "Архів (не ЦА)": "Архів (не ЦА)",
+    "target_leads": "Кількість цільових лідів",
+    "non_target_leads": "Кількість не цільових лідів",
+    "percent_target": "% цільових лідів",
+    "percent_non_target": "% не цільових лідів",
+    "percent_contact": "% Встан. контакт",
+    "percent_in_progress": "% В опрацюванні (ЦА)",
+    "percent_conversion": "% конверсія",
+    "percent_archive": "% архів",
+    "percent_no_answer": "% недозвон",
+    "price_per_lead": "Ціна / ліда",
+    "price_per_target_lead": "Ціна / цільового ліда",
+    "notes": "Нотатки",
+    "percent_trial_scheduled": "% Назначений пробний",
+    "percent_trial_completed": "% Проведений пробний від загальних лідів (ЦА)",
+    "percent_trial_conversion": "% Проведений пробний від назначених пробних",
+    "conversion_trial_to_sale": "Конверсія з проведеного пробного в продаж",
+    "cpc": "CPC"
+}
+
+# Маппінг для вкладки "Реклама"
+ADS_COLUMN_NAMES = {
+    "campaign_name": "Назва кампанії",
+    "campaign_id": "ID кампанії",
+    "period": "Період",
+    "first_analysis_date": "Перший аналіз",
+    "last_analysis_date": "Останній аналіз",
+    "date_start": "Дата початку",
+    "date_stop": "Дата завершення",
+    "date_update": "Дата оновлення",
+    "ad_name": "Назва оголошення",
+    "creative_image": "Зображення креативу",
+    "creative_text": "Текст креативу",
+    "image_url": "URL зображення",
+    "thumbnail_url": "URL мініатюри",
+    "location": "Локація",
+    "ctr": "CTR (%)",
+    "cpl": "CPL ($)",
+    "cpm": "CPM ($)",
+    "spend": "Витрати ($)",
+    "leads_count": "Кількість лідів",
+    "leads_target": "Цільові ліди",
+    "leads_non_target": "Не цільові ліди",
+    "leads_no_answer": "Недозвон",
+    "leads_in_progress": "В опрацюванні",
+    "percent_target": "% цільових",
+    "percent_non_target": "% не цільових",
+    "percent_no_answer": "% недозвон",
+    "percent_in_progress": "% в опрацюванні",
+    "price_per_lead": "Ціна за ліда",
+    "price_per_target_lead": "Ціна за цільового ліда",
+    "recommendation": "Рекомендація"
+}
+
+# Маппінг для вкладки "Вчителі"
+TEACHERS_COLUMN_NAMES = {
+    "campaign_name": "Назва кампанії",
+    "campaign_link": "Посилання на кампанію",
+    "analysis_date": "Дата аналізу",
+    "period": "Період",
+    "budget": "Бюджет ($)",
+    "location": "Локація",
+    "leads_count": "Кількість лідів",
+    "leads_check": "Перевірка лідів",
+    "new_leads": "Нові ліди",
+    "contact_established": "Контакт встановлено",
+    "qualified": "Кваліфіковано",
+    "interview_scheduled": "Співбесіду призначено",
+    "interview_completed": "Співбесіду проведено",
+    "offer_sent": "Оффер відправлено",
+    "hired": "Найнято",
+    "rejected": "Відхилено",
+    "no_answer": "Недозвон",
+    "target_leads": "Цільові ліди",
+    "non_target_leads": "Не цільові ліди",
+    "conversion_hired": "% найнято",
+    "conversion_qualified": "% кваліфіковано",
+    "conversion_lead_to_interview": "% ліди → співбесіда",
+    "conversion_interview_to_hire": "% співбесіда → найм",
+    "percent_target": "% цільових",
+    "percent_non_target": "% не цільових",
+    "price_per_lead": "Ціна за ліда",
+    "price_per_target_lead": "Ціна за цільового ліда",
+    "campaign_status": "Статус кампанії"
+}
+
 
 def get_or_create_analysis_record(db: Session, campaign_id: str, period: str) -> Dict[str, str]:
     """
@@ -1192,17 +1297,6 @@ async def get_meta_data(
             status_purchased = funnel_stats.get("Отримана оплата (ЦА)", 0)
             status_archived = funnel_stats.get("Архів (ЦА)", 0)  # Всі архівні ліди за період (custom_ads_comp == 'архів')
             status_archived_non_target = funnel_stats.get("Архів (не ЦА)", 0)  # = 0 до рішення замовника про класифікацію
-            status_callback = funnel_stats.get("Передзвонити пізніше", 0)
-            status_old_clients = funnel_stats.get("Старі клієнти", 0)
-
-            # Старі маппінги для зворотної сумісності (використовують агреговані значення)
-            not_processed = status_not_processed
-            contact_established = status_contact
-            trial_scheduled = status_trial_scheduled
-            trial_completed = status_trial_completed
-            waiting_payment = status_waiting_payment
-            purchased = status_purchased
-            no_answer = status_no_answer
 
             # Цільові/нецільові
             # S = J + K + N + O + P (згідно зі специфікацією рядок 31)
@@ -1218,15 +1312,15 @@ async def get_meta_data(
             # Розрахунок відсотків
             percent_target = round((target_leads / leads_count * 100), 2) if leads_count > 0 else 0
             percent_non_target = round((non_target_leads / leads_count * 100), 2) if leads_count > 0 else 0
-            percent_contact = round((contact_established / leads_count * 100), 2) if leads_count > 0 else 0
-            percent_conversion = round((purchased / leads_count * 100), 2) if leads_count > 0 else 0  # Y: % конверсія = O/G (Купили / Кількість лідів)
-            percent_no_answer = round((no_answer / leads_count * 100), 2) if leads_count > 0 else 0
+            percent_contact = round((status_contact / leads_count * 100), 2) if leads_count > 0 else 0
+            percent_conversion = round((status_purchased / leads_count * 100), 2) if leads_count > 0 else 0  # Y: % конверсія = O/G (Купили / Кількість лідів)
+            percent_no_answer = round((status_no_answer / leads_count * 100), 2) if leads_count > 0 else 0
 
             # Розрахунок для пробних уроків
-            percent_trial_scheduled = round((trial_scheduled / leads_count * 100), 2) if leads_count > 0 else 0
-            percent_trial_completed = round((trial_completed / leads_count * 100), 2) if leads_count > 0 else 0
-            percent_trial_conversion = round((trial_completed / trial_scheduled * 100), 2) if trial_scheduled > 0 else 0
-            conversion_trial_to_sale = round((purchased / trial_completed * 100), 2) if trial_completed > 0 else 0
+            percent_trial_scheduled = round((status_trial_scheduled / leads_count * 100), 2) if leads_count > 0 else 0
+            percent_trial_completed = round((status_trial_completed / leads_count * 100), 2) if leads_count > 0 else 0
+            percent_trial_conversion = round((status_trial_completed / status_trial_scheduled * 100), 2) if status_trial_scheduled > 0 else 0
+            conversion_trial_to_sale = round((status_purchased / status_trial_completed * 100), 2) if status_trial_completed > 0 else 0
 
             # Ціна за ліда
             price_per_lead = round((budget / leads_count), 2) if leads_count > 0 else 0
@@ -1243,16 +1337,6 @@ async def get_meta_data(
                 "budget": budget,
                 "location": location,  # ВИПРАВЛЕНО 2025-10-23: Локація з Meta Insights API
                 "leads_count": leads_count_fb,  # Кількість лідів з Facebook API (з leadgen_forms)
-                "not_processed": not_processed,
-                "contact_established": contact_established,
-                "in_progress": status_in_progress_agg,  # K: В опрацюванні (ЦА) - використовуємо агреговане значення (спец. рядок 21)
-                "trial_scheduled": trial_scheduled,
-                "trial_completed": trial_completed,
-                "waiting_payment": waiting_payment,
-                "purchased": purchased,
-                "archive": funnel_stats.get("Архів (ЦА)", 0),  # Архівні ліди ЦА (всі архівні за період)
-                "no_answer": no_answer,
-                "archive_non_target": funnel_stats.get("Архів (не ЦА)", 0),  # Архівні ліди не ЦА (= 0 до рішення замовника)
                 "target_leads": target_leads,
                 "non_target_leads": non_target_leads,
                 "percent_target": percent_target,
@@ -1270,20 +1354,18 @@ async def get_meta_data(
                 "percent_trial_conversion": percent_trial_conversion,
                 "conversion_trial_to_sale": conversion_trial_to_sale,
                 "cpc": cpc,  # AI: CPC (Cost Per Click) - TODO: з Meta Insights API
-                # 12 АГРЕГОВАНИХ СТАТУСІВ ALFACRM (замість 38 окремих)
+                # 10 СТАТУСІВ ALFACRM згідно специфікації (колонки I-R)
                 # Синхронізовано з backend AGGREGATED_STATUSES (alfacrm_tracking.py)
                 "Не розібраний": status_not_processed,
                 "Недозвон (не ЦА)": status_no_answer,
                 "Встановлено контакт (ЦА)": status_contact,
                 "В опрацюванні (ЦА)": status_in_progress_agg,
-                "Призначено пробне (ЦА)": status_trial_scheduled,       # Cumulative counting
-                "Проведено пробне (ЦА)": status_trial_completed,        # Cumulative counting
-                "Чекає оплату": status_waiting_payment,            # Cumulative counting
+                "Призначено пробне (ЦА)": status_trial_scheduled,
+                "Проведено пробне (ЦА)": status_trial_completed,
+                "Чекає оплату": status_waiting_payment,
                 "Отримана оплата (ЦА)": status_purchased,
-                "Архів (ЦА)": status_archived,                    # НОВА КОЛОНКА P
-                "Архів (не ЦА)": status_archived_non_target,       # НОВА КОЛОНКА R
-                "Передзвонити пізніше": status_callback,
-                "Старі клієнти": status_old_clients
+                "Архів (ЦА)": status_archived,
+                "Архів (не ЦА)": status_archived_non_target
             })
 
         # INFO: Перевірка фінального розміру масиву students_data ПІСЛЯ циклу
@@ -1780,10 +1862,11 @@ def _get_column_metadata() -> Dict[str, Dict[str, str]]:
 
     # Студенти
     students_crm = {
-        "not_processed", "contact_established", "in_progress",
-        "trial_scheduled", "trial_completed", "waiting_payment",
-        "purchased", "archive", "no_answer", "archive_non_target",
-        "leads_count"
+        "leads_count",
+        # 10 СТАТУСІВ ALFACRM (українські назви згідно специфікації)
+        "Не розібраний", "Недозвон (не ЦА)", "Встановлено контакт (ЦА)",
+        "В опрацюванні (ЦА)", "Призначено пробне (ЦА)", "Проведено пробне (ЦА)",
+        "Чекає оплату", "Отримана оплата (ЦА)", "Архів (ЦА)", "Архів (не ЦА)"
     }
     students_formula = {
         "target_leads", "non_target_leads", "percent_target", "percent_non_target",
@@ -1875,21 +1958,11 @@ def _apply_column_color_coding(ws, headers, data_type="students"):
 
     if data_type == "students":
         crm_fields = {
-            "not_processed", "contact_established", "in_progress",
-            "trial_scheduled", "trial_completed", "waiting_payment",
-            "purchased", "archive", "no_answer", "archive_non_target",
             "leads_count",
-            # ВСІ 38 СТАТУСІВ ALFACRM для journey відображення
-            # Основна воронка (20 статусів)
-            "status_13", "status_11", "status_10", "status_27", "status_1",
-            "status_32", "status_26", "status_12", "status_6", "status_2",
-            "status_3", "status_5", "status_9", "status_4", "status_29",
-            "status_25", "status_30", "status_31", "status_8", "status_50",
-            # Вторинна воронка (18 статусів)
-            "status_18", "status_40", "status_42", "status_43", "status_22",
-            "status_44", "status_24", "status_34", "status_35", "status_37",
-            "status_36", "status_38", "status_39", "status_45", "status_46",
-            "status_47", "status_48", "status_49"
+            # 10 СТАТУСІВ ALFACRM (українські назви згідно специфікації)
+            "Не розібраний", "Недозвон (не ЦА)", "Встановлено контакт (ЦА)",
+            "В опрацюванні (ЦА)", "Призначено пробне (ЦА)", "Проведено пробне (ЦА)",
+            "Чекає оплату", "Отримана оплата (ЦА)", "Архів (ЦА)", "Архів (не ЦА)"
         }
         formula_fields = {
             "target_leads", "non_target_leads", "percent_target", "percent_non_target",
@@ -1974,12 +2047,13 @@ async def export_meta_excel(request: Request, payload: Dict[str, Any]):
         ws_ads.title = "Реклама"
 
         if ads_data:
-            # Заголовки для реклами
-            ads_headers = list(ads_data[0].keys())
-            ws_ads.append(ads_headers)
+            # Заголовки для реклами - перекладаємо на українську
+            ads_headers_en = list(ads_data[0].keys())
+            ads_headers_uk = [ADS_COLUMN_NAMES.get(h, h) for h in ads_headers_en]
+            ws_ads.append(ads_headers_uk)
 
-            # Застосовуємо цветову маркіровку
-            _apply_column_color_coding(ws_ads, ads_headers, data_type="ads")
+            # Застосовуємо цветову маркіровку (використовуємо англійські назви для логіки)
+            _apply_column_color_coding(ws_ads, ads_headers_en, data_type="ads")
 
             # Дані
             for row_data in ads_data:
@@ -1988,11 +2062,13 @@ async def export_meta_excel(request: Request, payload: Dict[str, Any]):
         # Лист 2: Студенти
         ws_students = wb.create_sheet("Студенти")
         if students_data:
-            students_headers = list(students_data[0].keys())
-            ws_students.append(students_headers)
+            # Заголовки для студентів - перекладаємо на українську
+            students_headers_en = list(students_data[0].keys())
+            students_headers_uk = [STUDENTS_COLUMN_NAMES.get(h, h) for h in students_headers_en]
+            ws_students.append(students_headers_uk)
 
-            # Застосовуємо цветову маркіровку для студентів (Meta=голубий, CRM=рожевий, Calc=зелений)
-            _apply_column_color_coding(ws_students, students_headers, data_type="students")
+            # Застосовуємо цветову маркіровку (використовуємо англійські назви для логіки)
+            _apply_column_color_coding(ws_students, students_headers_en, data_type="students")
 
             for row_data in students_data:
                 ws_students.append(list(row_data.values()))
@@ -2000,10 +2076,12 @@ async def export_meta_excel(request: Request, payload: Dict[str, Any]):
         # Лист 3: Вчителі
         ws_teachers = wb.create_sheet("Вчителі")
         if teachers_data:
-            teachers_headers = list(teachers_data[0].keys())
-            ws_teachers.append(teachers_headers)
+            # Заголовки для вчителів - перекладаємо на українську
+            teachers_headers_en = list(teachers_data[0].keys())
+            teachers_headers_uk = [TEACHERS_COLUMN_NAMES.get(h, h) for h in teachers_headers_en]
+            ws_teachers.append(teachers_headers_uk)
 
-            for col_idx, header in enumerate(teachers_headers, 1):
+            for col_idx, header in enumerate(teachers_headers_uk, 1):
                 cell = ws_teachers.cell(row=1, column=col_idx)
                 cell.font = Font(bold=True, color="FFFFFF")
                 cell.fill = PatternFill(start_color="FFC000", end_color="FFC000", fill_type="solid")
