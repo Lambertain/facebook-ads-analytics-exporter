@@ -1259,7 +1259,7 @@ async def get_meta_data(
                 "percent_target": percent_target,
                 "percent_non_target": percent_non_target,
                 "percent_contact": percent_contact,
-                "percent_in_progress": round((funnel_stats.get("Розмовляли, чекаємо відповідь", 0) / leads_count * 100), 2) if leads_count > 0 else 0,
+                "percent_in_progress": round((status_in_progress_agg / leads_count * 100), 2) if leads_count > 0 else 0,  # X = K / G (В опрацюванні (ЦА) / Кількість лідів) - спец. строка 38
                 "percent_conversion": percent_conversion,
                 "percent_archive": round(((funnel_stats.get("Архів (ЦА)", 0) + funnel_stats.get("Архів (не ЦА)", 0)) / leads_count * 100), 2) if leads_count > 0 else 0,
                 "percent_no_answer": percent_no_answer,
