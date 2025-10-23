@@ -1219,7 +1219,7 @@ async def get_meta_data(
             percent_target = round((target_leads / leads_count * 100), 2) if leads_count > 0 else 0
             percent_non_target = round((non_target_leads / leads_count * 100), 2) if leads_count > 0 else 0
             percent_contact = round((contact_established / leads_count * 100), 2) if leads_count > 0 else 0
-            percent_conversion = round((purchased / target_leads * 100), 2) if target_leads > 0 else 0  # Y: % конверсія (Купили / Кількість цільових лідів)
+            percent_conversion = round((purchased / leads_count * 100), 2) if leads_count > 0 else 0  # Y: % конверсія = O/G (Купили / Кількість лідів)
             percent_no_answer = round((no_answer / leads_count * 100), 2) if leads_count > 0 else 0
 
             # Розрахунок для пробних уроків
