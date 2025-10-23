@@ -1213,7 +1213,7 @@ async def get_meta_data(
                 status_purchased +            # O - Отримана оплата (ЦА)
                 status_archived               # P - Архів (ЦА)
             )
-            non_target_leads = not_processed + no_answer  # Необроблені + недзвони (не ЦА)
+            non_target_leads = status_no_answer + status_archived_non_target  # T = Q + R (Недозвон (не ЦА) + Архів (не ЦА))
 
             # Розрахунок відсотків
             percent_target = round((target_leads / leads_count * 100), 2) if leads_count > 0 else 0
