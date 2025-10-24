@@ -1265,6 +1265,8 @@ async def get_meta_data(
             # Отримуємо статистику воронки для цієї кампанії
             campaign_tracking = students_tracking.get(campaign_id, {})
             funnel_stats = campaign_tracking.get("funnel_stats", {})
+            # НОВОЕ 2025-10-24: Получаем массивы телефонов вместо счетчиков
+            phone_arrays = campaign_tracking.get("phone_arrays", {})
 
             # Базові показники
             leads_count = int(funnel_stats.get("Кількість лідів", 0)) if funnel_stats.get("Кількість лідів") else 0
@@ -1286,17 +1288,30 @@ async def get_meta_data(
                 logger.info(f"[DEBUG STUDENTS LOOP {students_data_debug_counter}]   campaign_tracking has data: {bool(campaign_tracking)}")
 
             # 10 АГРЕГОВАНИХ СТАТУСІВ ALFACRM (синхронізовано з alfacrm_tracking.py)
-            # Замість 38 окремих полів використовуємо агреговані групи
-            status_not_processed = funnel_stats.get("Не розібраний", 0)
-            status_no_answer = funnel_stats.get("Недозвон (не ЦА)", 0)
-            status_contact = funnel_stats.get("Встановлено контакт (ЦА)", 0)
-            status_in_progress_agg = funnel_stats.get("В опрацюванні (ЦА)", 0)
-            status_trial_scheduled = funnel_stats.get("Призначено пробне (ЦА)", 0)
-            status_trial_completed = funnel_stats.get("Проведено пробне (ЦА)", 0)
-            status_waiting_payment = funnel_stats.get("Чекає оплату", 0)
-            status_purchased = funnel_stats.get("Отримана оплата (ЦА)", 0)
-            status_archived = funnel_stats.get("Архів (ЦА)", 0)  # Всі архівні ліди за період (custom_ads_comp == 'архів')
-            status_archived_non_target = funnel_stats.get("Архів (не ЦА)", 0)  # = 0 до рішення замовника про класифікацію
+            # ИЗМЕНЕНО 2025-10-24: Извлекаем массивы телефонов вместо счетчиков
+            phone_not_processed = phone_arrays.get("Не розібраний", [])
+            phone_no_answer = phone_arrays.get("Недозвон (не ЦА)", [])
+            phone_contact = phone_arrays.get("Встановлено контакт (ЦА)", [])
+            phone_in_progress_agg = phone_arrays.get("В опрацюванні (ЦА)", [])
+            phone_trial_scheduled = phone_arrays.get("Призначено пробне (ЦА)", [])
+            phone_trial_completed = phone_arrays.get("Проведено пробне (ЦА)", [])
+            phone_waiting_payment = phone_arrays.get("Чекає оплату", [])
+            phone_purchased = phone_arrays.get("Отримана оплата (ЦА)", [])
+            phone_archived = phone_arrays.get("Архів (ЦА)", [])  # Всі архівні ліди за період (custom_ads_comp == 'архів')
+            phone_archived_non_target = phone_arrays.get("Архів (не ЦА)", [])  # = 0 до рішення замовника про класифікацію
+            phone_leads_count = phone_arrays.get("leads_count", [])
+
+            # Рассчитываем counts для процентов и цен
+            status_not_processed = len(phone_not_processed)
+            status_no_answer = len(phone_no_answer)
+            status_contact = len(phone_contact)
+            status_in_progress_agg = len(phone_in_progress_agg)
+            status_trial_scheduled = len(phone_trial_scheduled)
+            status_trial_completed = len(phone_trial_completed)
+            status_waiting_payment = len(phone_waiting_payment)
+            status_purchased = len(phone_purchased)
+            status_archived = len(phone_archived)
+            status_archived_non_target = len(phone_archived_non_target)
 
             # Цільові/нецільові
             # S = J + K + N + O + P (згідно зі специфікацією рядок 31)
@@ -1336,7 +1351,7 @@ async def get_meta_data(
                 "period": f"{start_date} - {end_date}",
                 "budget": budget,
                 "location": location,  # ВИПРАВЛЕНО 2025-10-23: Локація з Meta Insights API
-                "leads_count": leads_count_fb,  # Кількість лідів з Facebook API (з leadgen_forms)
+                "leads_count": phone_leads_count,  # ИЗМЕНЕНО 2025-10-24: Массив телефонов вместо count
                 "target_leads": target_leads,
                 "non_target_leads": non_target_leads,
                 "percent_target": percent_target,
@@ -1355,17 +1370,17 @@ async def get_meta_data(
                 "conversion_trial_to_sale": conversion_trial_to_sale,
                 "cpc": cpc,  # AI: CPC (Cost Per Click) - TODO: з Meta Insights API
                 # 10 СТАТУСІВ ALFACRM згідно специфікації (колонки I-R)
-                # Синхронізовано з backend AGGREGATED_STATUSES (alfacrm_tracking.py)
-                "Не розібраний": status_not_processed,
-                "Недозвон (не ЦА)": status_no_answer,
-                "Встановлено контакт (ЦА)": status_contact,
-                "В опрацюванні (ЦА)": status_in_progress_agg,
-                "Призначено пробне (ЦА)": status_trial_scheduled,
-                "Проведено пробне (ЦА)": status_trial_completed,
-                "Чекає оплату": status_waiting_payment,
-                "Отримана оплата (ЦА)": status_purchased,
-                "Архів (ЦА)": status_archived,
-                "Архів (не ЦА)": status_archived_non_target
+                # ИЗМЕНЕНО 2025-10-24: Массивы телефонов вместо integer counts
+                "Не розібраний": phone_not_processed,
+                "Недозвон (не ЦА)": phone_no_answer,
+                "Встановлено контакт (ЦА)": phone_contact,
+                "В опрацюванні (ЦА)": phone_in_progress_agg,
+                "Призначено пробне (ЦА)": phone_trial_scheduled,
+                "Проведено пробне (ЦА)": phone_trial_completed,
+                "Чекає оплату": phone_waiting_payment,
+                "Отримана оплата (ЦА)": phone_purchased,
+                "Архів (ЦА)": phone_archived,
+                "Архів (не ЦА)": phone_archived_non_target
             })
 
         # INFO: Перевірка фінального розміру масиву students_data ПІСЛЯ циклу
@@ -2070,8 +2085,40 @@ async def export_meta_excel(request: Request, payload: Dict[str, Any]):
             # Застосовуємо цветову маркіровку (використовуємо англійські назви для логіки)
             _apply_column_color_coding(ws_students, students_headers_en, data_type="students")
 
-            for row_data in students_data:
-                ws_students.append(list(row_data.values()))
+            # ИЗМЕНЕНО 2025-10-24: Обработка массивов телефонов
+            # Список полей с массивами телефонов
+            phone_array_fields = {
+                "leads_count",
+                "Не розібраний",
+                "Недозвон (не ЦА)",
+                "Встановлено контакт (ЦА)",
+                "В опрацюванні (ЦА)",
+                "Призначено пробне (ЦА)",
+                "Проведено пробне (ЦА)",
+                "Чекає оплату",
+                "Отримана оплата (ЦА)",
+                "Архів (ЦА)",
+                "Архів (не ЦА)"
+            }
+
+            for row_idx, row_data in enumerate(students_data, start=2):  # start=2 т.к. row 1 = заголовки
+                # Преобразуем значения: массивы телефонов → строки с переносами
+                formatted_row = []
+                for key, value in row_data.items():
+                    if key in phone_array_fields and isinstance(value, list):
+                        # Форматируем массив телефонов как строку с переносами
+                        formatted_value = "\n".join(value) if value else ""
+                        formatted_row.append(formatted_value)
+                    else:
+                        formatted_row.append(value)
+
+                ws_students.append(formatted_row)
+
+                # Применяем wrap_text к ячейкам с телефонами
+                for col_idx, key in enumerate(students_headers_en, start=1):
+                    if key in phone_array_fields:
+                        cell = ws_students.cell(row=row_idx, column=col_idx)
+                        cell.alignment = Alignment(wrap_text=True, vertical="top")
 
         # Лист 3: Вчителі
         ws_teachers = wb.create_sheet("Вчителі")

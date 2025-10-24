@@ -402,6 +402,121 @@ def track_campaign_leads(
     return status_counts
 
 
+def get_lead_phones_by_status(
+    campaign_leads: List[Dict[str, Any]],
+    student_index: Dict[str, Dict[str, Any]]
+) -> Dict[str, List[str]]:
+    """
+    Получить массивы номеров телефонов лидов, сгруппированные по статусам.
+
+    Args:
+        campaign_leads: Список лидов одной кампании из Meta API
+        student_index: Индекс студентов {normalized_contact: student}
+
+    Returns:
+        {
+            "leads_count": ["+380501234567", "+380631234567", ...],
+            "Не розібраний": ["+380509876543", ...],
+            "Встановлено контакт (ЦА)": ["+380661234567", ...],
+            ...
+        }
+    """
+    # Инициализируем массивы для каждого агрегированного статуса
+    status_phones = {status_name: [] for status_name in AGGREGATED_STATUSES}
+    all_lead_phones = []
+
+    # Для cumulative counting: сохраняем всех лидов по trial funnel уровням
+    trial_funnel_phones = {level: [] for level in TRIAL_FUNNEL_HIERARCHY.keys()}
+
+    for lead in campaign_leads:
+        # Извлекаем контакты лида
+        phone, email = extract_lead_contacts(lead)
+
+        # Ищем студента в индексе
+        student = None
+        if phone and phone in student_index:
+            student = student_index[phone]
+        elif email and email in student_index:
+            student = student_index[email]
+
+        # Используем телефон из лида (не из студента)
+        # Форматируем для вывода: +380501234567
+        display_phone = None
+        if phone:
+            # Добавляем + в начало если это 12-значный номер с 380
+            if phone.startswith('380') and len(phone) == 12:
+                display_phone = '+' + phone
+            else:
+                display_phone = phone
+
+        # Добавляем в общий список всех лидов
+        if display_phone:
+            all_lead_phones.append(display_phone)
+
+        if student and display_phone:
+            # ПРОВЕРКА НА АРХИВ: Сначала проверяем custom_ads_comp
+            custom_ads_comp = student.get("custom_ads_comp", "")
+            if custom_ads_comp == "архів":
+                # Архивные лиды добавляются в "Призначено пробне (ЦА)" для cumulative
+                trial_funnel_phones["Призначено пробне (ЦА)"].append(display_phone)
+                continue
+
+            # Получаем текущий статус студента
+            lead_status_id = student.get("lead_status_id")
+
+            if lead_status_id:
+                # Маппим status_id -> агрегированная группа
+                aggregated_group = ALFACRM_STATUS_TO_GROUP.get(lead_status_id)
+
+                if aggregated_group:
+                    # Проверяем - это trial funnel статус или нет
+                    if aggregated_group in TRIAL_FUNNEL_HIERARCHY:
+                        # Trial funnel: сохраняем для cumulative counting
+                        trial_funnel_phones[aggregated_group].append(display_phone)
+                        # ТАКОЖ додаємо в "В опрацюванні (ЦА)" (подвійна логіка)
+                        if "В опрацюванні (ЦА)" in status_phones:
+                            status_phones["В опрацюванні (ЦА)"].append(display_phone)
+                    else:
+                        # Не trial funnel: simple counting (current-status-only)
+                        if aggregated_group in status_phones:
+                            status_phones[aggregated_group].append(display_phone)
+
+    # CUMULATIVE COUNTING для trial funnel - аналогично track_campaign_leads
+    # Инициализация
+    status_phones["Призначено пробне (ЦА)"] = []
+    status_phones["Проведено пробне (ЦА)"] = []
+    status_phones["Чекає оплату"] = []
+    status_phones["Отримана оплата (ЦА)"] = []
+
+    # Ліди в статусі "Призначено пробне (ЦА)"
+    prizn_phones = trial_funnel_phones["Призначено пробне (ЦА)"]
+    status_phones["Призначено пробне (ЦА)"].extend(prizn_phones)
+
+    # Ліди в статусі "Проведено пробне (ЦА)"
+    prov_phones = trial_funnel_phones["Проведено пробне (ЦА)"]
+    status_phones["Проведено пробне (ЦА)"].extend(prov_phones)
+    status_phones["Призначено пробне (ЦА)"].extend(prov_phones)  # +1 на попередній етап
+
+    # Ліди в статусі "Чекає оплату"
+    chek_phones = trial_funnel_phones["Чекає оплату"]
+    status_phones["Чекає оплату"].extend(chek_phones)
+    status_phones["Проведено пробне (ЦА)"].extend(chek_phones)  # +1 на попередній етап
+    status_phones["Призначено пробне (ЦА)"].extend(chek_phones)  # +1 на попередній етап
+
+    # Ліди в статусі "Отримана оплата (ЦА)"
+    opl_phones = trial_funnel_phones["Отримана оплата (ЦА)"]
+    status_phones["Отримана оплата (ЦА)"].extend(opl_phones)
+    # ПРОПУСКАЄМО "Чекає оплату"!
+    status_phones["Проведено пробне (ЦА)"].extend(opl_phones)  # +1 на попередній етап
+    status_phones["Призначено пробне (ЦА)"].extend(opl_phones)  # +1 на попередній етап
+
+    # Добавляем все телефоны лидов в ключ "leads_count"
+    result = {"leads_count": all_lead_phones}
+    result.update(status_phones)
+
+    return result
+
+
 def extract_contacts_from_campaigns(campaigns_data: Dict[str, Dict[str, Any]], debug: bool = False) -> set:
     """
     Извлечь все уникальные контакты (телефоны и email) из лидов кампаний.
@@ -541,13 +656,17 @@ async def track_leads_by_campaigns(
         # Подсчитать статусы для этой кампании используя отфильтрованный индекс
         funnel_stats = track_campaign_leads(campaign_leads, filtered_index)
 
+        # НОВОЕ 2025-10-24: Получить массивы телефонов вместо счетчиков
+        phone_arrays = get_lead_phones_by_status(campaign_leads, filtered_index)
+
         enriched_campaigns[campaign_id] = {
             "campaign_id": campaign_data.get("campaign_id"),
             "campaign_name": campaign_data.get("campaign_name"),
             "budget": campaign_data.get("budget"),  # ИСПРАВЛЕНО 2025-10-21: Добавлено поле budget из Facebook
             "location": campaign_data.get("location"),  # ИСПРАВЛЕНО 2025-10-21: Добавлено поле location из Facebook
             "leads_count": len(campaign_leads),
-            "funnel_stats": funnel_stats
+            "funnel_stats": funnel_stats,
+            "phone_arrays": phone_arrays  # НОВОЕ 2025-10-24: Массивы телефонов по статусам
         }
 
     logger.info(f"Enriched {len(enriched_campaigns)} campaigns with AlfaCRM funnel stats")
