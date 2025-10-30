@@ -39,6 +39,7 @@ from .analytics_processor import AnalyticsProcessor
 from .services import nethunt_tracking
 from .services import alfacrm_tracking
 from .services import meta_leads
+from .services import campaign_formatter
 from sqlalchemy.orm import Session
 
 
@@ -100,6 +101,47 @@ progress = ProgressStore()
 WEB_DIST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "dist")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 
+# Правильний порядок колонок для експорту СТУДЕНТИ (згідно з UI в StudentsTable.tsx)
+# Цей порядок ОБОВ'ЯЗКОВИЙ для export_meta_excel() щоб співпадав з UI
+STUDENTS_EXPORT_ORDER = [
+    "campaign_name",
+    "campaign_link",
+    "analysis_date",
+    "period",
+    "budget",
+    "location",
+    "leads_count",
+    "leads_check",
+    "Не розібраний",
+    "Вст контакт невідомо",
+    "Вст контакт зацікавлений (ЦА)",  # В UI використовується саме ця назва
+    "В опрацюванні (ЦА)",
+    "Призначено пробне (ЦА)",
+    "Проведено пробне (ЦА)",
+    "Чекає оплату",
+    "Отримана оплата (ЦА)",
+    "Архів (ЦА)",
+    "Недозвон (не ЦА)",
+    "Архів (не ЦА)",
+    "target_leads",
+    "non_target_leads",
+    "percent_target",
+    "percent_non_target",
+    "percent_contact",
+    "percent_in_progress",
+    "percent_conversion",
+    "percent_archive",
+    "percent_no_answer",
+    "price_per_lead",
+    "price_per_target_lead",
+    "notes",
+    "percent_trial_scheduled",
+    "percent_trial_completed",
+    "percent_trial_conversion",
+    "conversion_trial_to_sale",
+    "cpc"
+]
+
 # Маппінг англійських назв колонок на українські для Excel експорту
 # Вкладка "Студенти" - згідно зі специфікацією A-AI (35 колонок)
 STUDENTS_COLUMN_NAMES = {
@@ -110,8 +152,11 @@ STUDENTS_COLUMN_NAMES = {
     "budget": "Витрачений бюджет в $",
     "location": "Місце знаходження",
     "leads_count": "Кількість лідів",
+    "leads_check": "Перевірка лідів автоматичний",
     "Не розібраний": "Не розібрані",
-    "Встановлено контакт (ЦА)": "Встанов. контакт (ЦА)",
+    "Вст контакт невідомо": "Вст контакт невідомо",
+    "Вст контакт зацікавлений (ЦА)": "Вст контакт зацікавлений (ЦА)",  # Назва з UI
+    "Встановлено контакт (ЦА)": "Встанов. контакт (ЦА)",  # Назва з backend (legacy)
     "В опрацюванні (ЦА)": "В опрацюванні (ЦА)",
     "Призначено пробне (ЦА)": "Назначений пробний (ЦА)",
     "Проведено пробне (ЦА)": "Проведений пробний (ЦА)",
@@ -138,6 +183,43 @@ STUDENTS_COLUMN_NAMES = {
     "conversion_trial_to_sale": "Конверсія з проведеного пробного в продаж",
     "cpc": "CPC"
 }
+
+# Правильний порядок колонок для експорту РЕКЛАМА (згідно з UI в App.tsx)
+# Порядок відповідає відображенню в таблиці (лінії 545-568 в App.tsx)
+ADS_EXPORT_ORDER = [
+    "campaign_name",
+    "campaign_id",  # Не відображається як колонка, але є в даних
+    "period",
+    "first_analysis_date",
+    "last_analysis_date",
+    "date_update",
+    "ad_name",
+    "creative_image",
+    "image_url",  # Альтернатива для creative_image
+    "creative_text",
+    "ctr",
+    "cpl",
+    "cpm",
+    "spend",
+    "leads_count",
+    "leads_target",
+    "leads_non_target",
+    "leads_no_answer",
+    "leads_in_progress",
+    "percent_target",
+    "percent_non_target",
+    "percent_no_answer",
+    "percent_in_progress",
+    "price_per_lead",
+    "price_per_target_lead",
+    "recommendation",
+    # Додаткові поля які можуть бути в даних але не відображаються в UI
+    "date_start",
+    "date_stop",
+    "thumbnail_url",
+    "location",
+    "creative_body"  # Альтернатива для creative_text
+]
 
 # Маппінг для вкладки "Реклама"
 ADS_COLUMN_NAMES = {
@@ -172,6 +254,51 @@ ADS_COLUMN_NAMES = {
     "price_per_target_lead": "Ціна за цільового ліда",
     "recommendation": "Рекомендація"
 }
+
+# Правильний порядок колонок для експорту ВЧИТЕЛІ (згідно з UI в App.tsx)
+# Порядок відповідає відображенню в таблиці (лінії 685-737 в App.tsx)
+TEACHERS_EXPORT_ORDER = [
+    "campaign_name",
+    "campaign_link",
+    "analysis_date",
+    "period",
+    "budget",
+    "location",
+    "leads_count",
+    "not_processed",  # "Не розібрані ліди"
+    "contacted",  # "Взяті в роботу" та "Контакт"
+    "not_reached",  # "НЕ дозвон"
+    "trial_scheduled",  # "Співбесіда"
+    "trial_completed",  # "СП проведено"
+    # Колонки 13-30 (placeholders в UI, додаткові статуси)
+    "target_leads",  # "Кількість цільових лідів"
+    "non_target_leads",  # "Кількість не цільових лідів"
+    "in_progress_percent",  # "Конверсія в опрацюванні (%)"
+    "target_percent",  # "% цільових лідів"
+    "non_target_percent",  # "% не цільових лідів"
+    "cost_per_lead",  # "Ціна в $ за ліда"
+    "cost_per_target_lead",  # "Ціна в $ за цільового ліда"
+    # Додаткові поля з TEACHERS_COLUMN_NAMES які можуть бути в даних
+    "leads_check",
+    "new_leads",
+    "contact_established",
+    "qualified",
+    "interview_scheduled",
+    "interview_completed",
+    "offer_sent",
+    "hired",
+    "rejected",
+    "no_answer",
+    "conversion_hired",
+    "conversion_qualified",
+    "conversion_lead_to_interview",
+    "conversion_interview_to_hire",
+    "percent_target",
+    "percent_non_target",
+    "price_per_lead",
+    "price_per_target_lead",
+    "campaign_status"
+]
 
 # Маппінг для вкладки "Вчителі"
 TEACHERS_COLUMN_NAMES = {
@@ -756,6 +883,141 @@ async def enrich_students_with_alfacrm(students_from_excel: List[Dict[str, Any]]
     except Exception as e:
         print(f"Попередження: збагачення даних з AlfaCRM не вдалося: {e}")
         return students_from_excel
+
+
+def calculate_students_formulas(students: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Вычисляет все формулы для студентов согласно спецификации.
+
+    Формулы из 'Анализ РК Студенти - Структура таблицы.md':
+    - Column 8 (H): leads_check
+    - Columns 19-20 (S-T): target_leads, non_target_leads
+    - Columns 21-27 (U-AA): percentages
+    - Columns 28-29 (AB-AC): prices
+    - Columns 31-34 (AE-AH): trial metrics
+    """
+    for student in students:
+        # Безопасное получение значений с преобразованием в числа
+        def safe_int(key, default=0):
+            val = student.get(key, default)
+            if isinstance(val, list):
+                return len(val)
+            try:
+                return int(val) if val not in (None, '', []) else default
+            except (ValueError, TypeError):
+                return default
+
+        def safe_float(key, default=0.0):
+            val = student.get(key, default)
+            try:
+                return float(val) if val not in (None, '', []) else default
+            except (ValueError, TypeError):
+                return default
+
+        # Базовые значения
+        leads_count = safe_int("leads_count")
+        budget = safe_float("budget")
+
+        # Статусы (колонки I-R, 9-18)
+        not_processed = safe_int("Не розібраний")
+        contact_unknown = safe_int("Вст контакт невідомо")
+        contact_interested = safe_int("Вст контакт зацікавлений (ЦА)")
+        in_progress = safe_int("В опрацюванні (ЦА)")
+        trial_scheduled = safe_int("Призначено пробне (ЦА)")
+        trial_completed = safe_int("Проведено пробне (ЦА)")
+        awaiting_payment = safe_int("Чекає оплату")
+        payment_received = safe_int("Отримана оплата (ЦА)")
+        archive_target = safe_int("Архів (ЦА)")
+        no_answer = safe_int("Недозвон (не ЦА)")
+        archive_non_target = safe_int("Архів (не ЦА)")
+
+        # ФОРМУЛА 1: Column 8 (H) - Перевірка лідів автоматичний
+        # = 9+10+11+14+15+16+17+18
+        leads_check = (
+            not_processed + contact_interested + in_progress +
+            awaiting_payment + payment_received + archive_target +
+            no_answer + archive_non_target
+        )
+        student["leads_check"] = leads_check
+
+        # ФОРМУЛА 2: Column 19 (S) - Кількість цільових лідів
+        # = 10+11+14+15+16
+        target_leads = (
+            contact_interested + in_progress + awaiting_payment +
+            payment_received + archive_target
+        )
+        student["target_leads"] = target_leads
+
+        # ФОРМУЛА 3: Column 20 (T) - Кількість не цільових лідів
+        # = 17+18
+        non_target_leads = no_answer + archive_non_target
+        student["non_target_leads"] = non_target_leads
+
+        # Процентные метрики (делаем расчеты только если leads_count > 0)
+        if leads_count > 0:
+            # ФОРМУЛА 4: Column 21 (U) - % цільових лідів
+            student["percent_target"] = round((target_leads / leads_count) * 100, 2)
+
+            # ФОРМУЛА 5: Column 22 (V) - % не цільових лідів
+            student["percent_non_target"] = round((non_target_leads / leads_count) * 100, 2)
+
+            # ФОРМУЛА 6: Column 23 (W) - % Встан. контакт
+            student["percent_contact"] = round((contact_interested / leads_count) * 100, 2)
+
+            # ФОРМУЛА 7: Column 24 (X) - % В опрацюванні (ЦА)
+            student["percent_in_progress"] = round((in_progress / leads_count) * 100, 2)
+
+            # ФОРМУЛА 8: Column 25 (Y) - % конверсія
+            student["percent_conversion"] = round((payment_received / leads_count) * 100, 2)
+
+            # ФОРМУЛА 9: Column 26 (Z) - % архів
+            total_archive = archive_target + archive_non_target
+            student["percent_archive"] = round((total_archive / leads_count) * 100, 2)
+
+            # ФОРМУЛА 10: Column 27 (AA) - % недозвон
+            student["percent_no_answer"] = round((no_answer / leads_count) * 100, 2)
+
+            # ФОРМУЛА 13: Column 31 (AE) - % Призначених пробних
+            student["percent_trial_scheduled"] = round((trial_scheduled / leads_count) * 100, 2)
+
+            # ФОРМУЛА 14: Column 32 (AF) - % Проведених пробних від загальних лідів
+            student["percent_trial_completed"] = round((trial_completed / leads_count) * 100, 2)
+        else:
+            student["percent_target"] = 0
+            student["percent_non_target"] = 0
+            student["percent_contact"] = 0
+            student["percent_in_progress"] = 0
+            student["percent_conversion"] = 0
+            student["percent_archive"] = 0
+            student["percent_no_answer"] = 0
+            student["percent_trial_scheduled"] = 0
+            student["percent_trial_completed"] = 0
+
+        # ФОРМУЛА 11: Column 28 (AB) - Ціна / ліда
+        if leads_count > 0:
+            student["price_per_lead"] = round(budget / leads_count, 2)
+        else:
+            student["price_per_lead"] = 0
+
+        # ФОРМУЛА 12: Column 29 (AC) - Ціна / цільового ліда
+        if target_leads > 0:
+            student["price_per_target_lead"] = round(budget / target_leads, 2)
+        else:
+            student["price_per_target_lead"] = 0
+
+        # ФОРМУЛА 15: Column 33 (AG) - % Проведених пробних від призначених
+        if trial_scheduled > 0:
+            student["percent_trial_conversion"] = round((trial_completed / trial_scheduled) * 100, 2)
+        else:
+            student["percent_trial_conversion"] = 0
+
+        # ФОРМУЛА 16: Column 34 (AH) - Конверсія з проведеного пробного в продаж
+        if trial_completed > 0:
+            student["conversion_trial_to_sale"] = round((payment_received / trial_completed) * 100, 2)
+        else:
+            student["conversion_trial_to_sale"] = 0
+
+    return students
 
 
 @app.post("/api/save-run-history")
@@ -2062,23 +2324,27 @@ async def export_meta_excel(request: Request, payload: Dict[str, Any]):
         ws_ads.title = "Реклама"
 
         if ads_data:
-            # Заголовки для реклами - перекладаємо на українську
-            ads_headers_en = list(ads_data[0].keys())
+            # ИСПРАВЛЕНО: Используем ADS_EXPORT_ORDER для правильного порядка колонок
+            ads_headers_en = ADS_EXPORT_ORDER
             ads_headers_uk = [ADS_COLUMN_NAMES.get(h, h) for h in ads_headers_en]
             ws_ads.append(ads_headers_uk)
 
             # Застосовуємо цветову маркіровку (використовуємо англійські назви для логіки)
             _apply_column_color_coding(ws_ads, ads_headers_en, data_type="ads")
 
-            # Дані
+            # ИСПРАВЛЕНО: Обходим колонки в правильном порядке ADS_EXPORT_ORDER
             for row_data in ads_data:
-                ws_ads.append(list(row_data.values()))
+                formatted_row = []
+                for key in ads_headers_en:
+                    value = row_data.get(key)
+                    formatted_row.append(value)
+                ws_ads.append(formatted_row)
 
         # Лист 2: Студенти
         ws_students = wb.create_sheet("Студенти")
         if students_data:
-            # Заголовки для студентів - перекладаємо на українську
-            students_headers_en = list(students_data[0].keys())
+            # ИСПРАВЛЕНО: Используем STUDENTS_EXPORT_ORDER для правильного порядка колонок
+            students_headers_en = STUDENTS_EXPORT_ORDER
             students_headers_uk = [STUDENTS_COLUMN_NAMES.get(h, h) for h in students_headers_en]
             ws_students.append(students_headers_uk)
 
@@ -2092,6 +2358,7 @@ async def export_meta_excel(request: Request, payload: Dict[str, Any]):
                 "Не розібраний",
                 "Недозвон (не ЦА)",
                 "Встановлено контакт (ЦА)",
+                "Вст контакт зацікавлений (ЦА)",  # Додано нову назву
                 "В опрацюванні (ЦА)",
                 "Призначено пробне (ЦА)",
                 "Проведено пробне (ЦА)",
@@ -2102,9 +2369,10 @@ async def export_meta_excel(request: Request, payload: Dict[str, Any]):
             }
 
             for row_idx, row_data in enumerate(students_data, start=2):  # start=2 т.к. row 1 = заголовки
-                # Преобразуем значения: массивы телефонов → строки с переносами
+                # ИСПРАВЛЕНО: Обходим колонки в правильном порядке STUDENTS_EXPORT_ORDER
                 formatted_row = []
-                for key, value in row_data.items():
+                for key in students_headers_en:
+                    value = row_data.get(key)  # Получаем значение по ключу
                     if key in phone_array_fields and isinstance(value, list):
                         # Форматируем массив телефонов как строку с переносами
                         formatted_value = "\n".join(value) if value else ""
@@ -2123,8 +2391,8 @@ async def export_meta_excel(request: Request, payload: Dict[str, Any]):
         # Лист 3: Вчителі
         ws_teachers = wb.create_sheet("Вчителі")
         if teachers_data:
-            # Заголовки для вчителів - перекладаємо на українську
-            teachers_headers_en = list(teachers_data[0].keys())
+            # ИСПРАВЛЕНО: Используем TEACHERS_EXPORT_ORDER для правильного порядка колонок
+            teachers_headers_en = TEACHERS_EXPORT_ORDER
             teachers_headers_uk = [TEACHERS_COLUMN_NAMES.get(h, h) for h in teachers_headers_en]
             ws_teachers.append(teachers_headers_uk)
 
@@ -2134,8 +2402,13 @@ async def export_meta_excel(request: Request, payload: Dict[str, Any]):
                 cell.fill = PatternFill(start_color="FFC000", end_color="FFC000", fill_type="solid")
                 cell.alignment = Alignment(horizontal="center", vertical="center")
 
+            # ИСПРАВЛЕНО: Обходим колонки в правильном порядке TEACHERS_EXPORT_ORDER
             for row_data in teachers_data:
-                ws_teachers.append(list(row_data.values()))
+                formatted_row = []
+                for key in teachers_headers_en:
+                    value = row_data.get(key)
+                    formatted_row.append(value)
+                ws_teachers.append(formatted_row)
 
         # Зберігаємо у тимчасовий файл
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2228,6 +2501,9 @@ async def get_students(request: Request, start_date: str = None, end_date: str =
             # Enrich with AlfaCRM data if requested
             if enrich:
                 students = await enrich_students_with_alfacrm(students)
+
+            # Вычисляем все формулы (leads_check, target_leads, percentages, prices, trial metrics)
+            students = calculate_students_formulas(students)
 
             return {"students": students, "count": len(students)}
         else:
@@ -2669,8 +2945,10 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
         else:
             progress.log(job_id, "NETHUNT_FOLDER_ID не встановлено; викладачі пропущені")
 
-        # Fetch students from AlfaCRM
-        students: list[dict] = []
+        # Fetch students from AlfaCRM (используется для индексации в track_leads_by_campaigns)
+        # Результат экспорта будет сформирован из enriched_campaigns
+        alfacrm_students: list[dict] = []
+        students: list[dict] = []  # Для экспорта Excel (будет заполнен позже)
         if os.getenv("ALFACRM_BASE_URL") and os.getenv("ALFACRM_EMAIL") and os.getenv("ALFACRM_API_KEY") and os.getenv("ALFACRM_COMPANY_ID"):
             try:
                 page = 1
@@ -2694,12 +2972,12 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
                                         flat[k] = str(v)
                                 else:
                                     flat[k] = v
-                        students.append(flat)
+                        alfacrm_students.append(flat)
                     total += len(items)
                     if len(items) < 200:
                         break
                     page += 1
-                progress.log(job_id, f"Отримано студентів з AlfaCRM: {len(students)}")
+                progress.log(job_id, f"Отримано студентів з AlfaCRM: {len(alfacrm_students)}")
 
                 # Enrich students with funnel statistics from AlfaCRM tracking
                 try:
@@ -2734,6 +3012,27 @@ async def run_pipeline(job_id: str, params: Dict[str, Any]):
                             page_size=500
                         )
                         progress.log(job_id, f"Обраховано воронку для {len(enriched_campaigns)} кампаній студентів")
+
+                        # Преобразовать enriched_campaigns в формат для Excel
+                        if enriched_campaigns:
+                            # Форматировать даты
+                            analysis_date = datetime.now().strftime("%d.%m.%Y")
+                            date_range = f"{params['start_date']} - {params['end_date']}"
+
+                            # URL на рекламный аккаунт Facebook (из env или константа)
+                            facebook_ads_url = os.getenv("FACEBOOK_ADS_URL", "https://www.facebook.com/adsmanager")
+
+                            # Преобразовать в строки Excel
+                            students = campaign_formatter.transform_enriched_campaigns_to_excel_rows(
+                                enriched_campaigns=enriched_campaigns,
+                                analysis_date=analysis_date,
+                                date_range=date_range,
+                                facebook_ads_url=facebook_ads_url
+                            )
+                            progress.log(job_id, f"Сформовано {len(students)} рядків для експорту студентів")
+                        else:
+                            progress.log(job_id, "Немає даних для експорту студентів")
+
                     else:
                         progress.log(job_id, "META_PAGE_ID або META_PAGE_ACCESS_TOKEN не налаштовані - пропускаємо трекінг студентів")
 

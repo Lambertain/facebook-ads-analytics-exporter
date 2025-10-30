@@ -939,7 +939,7 @@ export default function App() {
 
       <Typography variant="h6" sx={{ mt: 3, mb: 2 }}>2. Збір даних з Meta Ads</Typography>
       <Typography paragraph>
-        У вкладці <strong>Запуск</strong>:
+        У вкладці <strong>Аналіз</strong>:
       </Typography>
       <Box component="ol" sx={{ pl: 3 }}>
         <li>Виберіть період дат (Період з → Період до)</li>
@@ -1026,7 +1026,7 @@ export default function App() {
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
         <TextField fullWidth label="NETHUNT_FOLDER_ID" value={cfg.NETHUNT_FOLDER_ID?.value || ''} onChange={e=>updateField('NETHUNT_FOLDER_ID', e.target.value)} />
         <Help title="Де взяти folder_id?">
-          <Typography>Натисніть «NetHunt папки» у вкладці Запуск — візьміть ID потрібної папки для викладачів.</Typography>
+          <Typography>Натисніть «NetHunt папки» у вкладці Аналіз — візьміть ID потрібної папки для викладачів.</Typography>
         </Help>
       </Box>
 
@@ -1086,7 +1086,7 @@ export default function App() {
           </Typography>
           <Tabs value={tab} onChange={(_,v)=>setTab(v)} textColor="inherit" indicatorColor="secondary">
             <Tab label="Як користуватись" value="instructions" />
-            <Tab label="Запуск" value="run" />
+            <Tab label="Аналіз" value="run" />
             <Tab label="Історія" value="history" />
             <Tab label="Налаштування" value="settings" />
           </Tabs>

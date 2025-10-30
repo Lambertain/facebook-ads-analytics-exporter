@@ -67,18 +67,23 @@ export default function StudentsTable({ students, filterInfo }: StudentsTablePro
           <TableHead>
             <TableRow>
               {/* A-F: Основна інформація (біла заливка) */}
-              <TableCell sx={{ backgroundColor: COLOR_WHITE, fontWeight: 'bold' }}>Назва кампанії</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_WHITE }}>Дата аналізу</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_WHITE }}>Період аналізу</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_WHITE }}>Бюджет ($)</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_WHITE }}>Локація</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_WHITE, fontWeight: 'bold' }}>Назва РК</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_WHITE }}>Посилання на РК</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_WHITE, whiteSpace: 'nowrap', minWidth: '110px' }}>Дата аналізу</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_WHITE, whiteSpace: 'nowrap', minWidth: '200px' }}>Період аналізу</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_WHITE }}>Витрачений бюджет в $</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_WHITE }}>Місце знаходження</TableCell>
 
               {/* G: Кількість лідів (світло-жовта заливка) */}
               <TableCell sx={{ backgroundColor: COLOR_LIGHT_YELLOW, fontWeight: 'bold' }}>Кількість лідів</TableCell>
 
+              {/* H: Перевірка лідів автоматичний (ФОРМУЛА) */}
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_YELLOW, fontWeight: 'bold' }}>Перевірка лідів автоматичний</TableCell>
+
               {/* I-R: CRM статуси (різна заливка) */}
               <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>Не розібраний</TableCell>
-              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>Встановлено контакт (ЦА)</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>Вст контакт невідомо</TableCell>
+              <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>Вст контакт зацікавлений (ЦА)</TableCell>
               <TableCell sx={{ backgroundColor: COLOR_LIGHT_PURPLE, fontWeight: 'bold' }}>В опрацюванні (ЦА)</TableCell>
               <TableCell sx={{ backgroundColor: COLOR_ORANGE, fontWeight: 'bold' }}>Призначено пробне (ЦА)</TableCell>
               <TableCell sx={{ backgroundColor: COLOR_ORANGE, fontWeight: 'bold' }}>Проведено пробне (ЦА)</TableCell>
@@ -122,6 +127,7 @@ export default function StudentsTable({ students, filterInfo }: StudentsTablePro
             {students.map((s, idx) => (
               <TableRow key={idx} hover>
                 {/* A-F: Основна інформація */}
+                <TableCell>{s.campaign_name || "Без назви"}</TableCell>
                 <TableCell>
                   <Link
                     href={s.campaign_link}
@@ -129,7 +135,7 @@ export default function StudentsTable({ students, filterInfo }: StudentsTablePro
                     rel="noopener noreferrer"
                     sx={{ textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
                   >
-                    {s.campaign_name || "Без назви"}
+                    {s.campaign_link || "-"}
                   </Link>
                 </TableCell>
                 <TableCell>{s.analysis_date}</TableCell>
@@ -140,9 +146,13 @@ export default function StudentsTable({ students, filterInfo }: StudentsTablePro
                 {/* G: Кількість лідів */}
                 <TableCell>{s.leads_count}</TableCell>
 
+                {/* H: Перевірка лідів автоматичний (ФОРМУЛА) */}
+                <TableCell>{s.leads_check || 0}</TableCell>
+
                 {/* I-R: CRM статуси */}
                 <TableCell>{s["Не розібраний"] || 0}</TableCell>
-                <TableCell>{s["Встановлено контакт (ЦА)"] || 0}</TableCell>
+                <TableCell>{s["Вст контакт невідомо"] || 0}</TableCell>
+                <TableCell>{s["Вст контакт зацікавлений (ЦА)"] || 0}</TableCell>
                 <TableCell>{s["В опрацюванні (ЦА)"] || 0}</TableCell>
                 <TableCell>{s["Призначено пробне (ЦА)"] || 0}</TableCell>
                 <TableCell>{s["Проведено пробне (ЦА)"] || 0}</TableCell>
