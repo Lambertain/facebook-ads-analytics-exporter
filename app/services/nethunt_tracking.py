@@ -1,585 +1,309 @@
 """
-NetHunt Lead Tracking Service
+NetHunt CRM Tracking Service для вчителів.
 
-Трекинг прогресса лидов (учителей) из Meta Ads через РЕАЛЬНУЮ историю изменений NetHunt API.
-Использует endpoint /triggers/record-change/ для получения полной истории статусов.
+Inference підхід (БЕЗ історії змін):
+- Рахує ліди в поточному статусі на момент аналізу
+- НЕ використовує API історії змін
+- Аналогічно alfacrm_tracking.py для студентів
 
-ОТЛИЧИЕ ОТ ALFACRM:
-- AlfaCRM: Inference подход (восстановление пути из текущего статуса)
-- NetHunt: Real history (полная история изменений из API)
-
-Преимущества NetHunt подхода:
-- Точные временные метки изменений
-- Информация о том, кто изменил статус
-- История всех полей, не только статус
+Функціонал:
+1. Отримання поточних записів з NetHunt CRM
+2. Нормалізація контактів (телефони, email)
+3. Індексація вчителів за нормалізованими контактами
+4. Обогащення кампаній з Meta Ads статистикою воронки
 """
-import os
 import logging
-import requests
-from typing import List, Dict, Optional, Any
-from datetime import datetime
-import sys
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-    before_sleep_log
-)
+from typing import Dict, List, Optional, Any, Set
+from collections import defaultdict
 
-# Добавляем путь к app для импорта connectors и config
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
-from connectors.crm import nethunt_list_folders, nethunt_list_records
-from config.settings import (
-    NETHUNT_BASE_URL,
-    NETHUNT_AUTH,
-    NETHUNT_TIMEOUT,
-    NETHUNT_STATUS_MAPPING,
-    NETHUNT_FOLDER_ID,
-    NETHUNT_STRICT_VALIDATION
+from app.connectors.crm import (
+    nethunt_list_records,
+    nethunt_list_folders,
+    nethunt_folder_fields,
 )
+from app.config.settings import NETHUNT_STATUS_MAPPING
 
 logger = logging.getLogger(__name__)
 
 
+# ============================================================================
+# НОРМАЛІЗАЦІЯ КОНТАКТІВ
+# ============================================================================
+
+
 def normalize_contact(contact: Optional[str]) -> Optional[str]:
     """
-    Нормализовать контакт (телефон или email) для поиска.
+    Нормалізує контакт (телефон або email) для однозначного зіставлення.
 
-    Для телефонов использует умную нормализацию:
-    - Убирает все кроме цифр
-    - Приводит украинские номера к единому формату с кодом страны 380
-    - Возвращает последние 12 цифр (380 + 9 цифр номера)
+    Логіка нормалізації телефонів (українські номери):
+    - 0380XXXXXXXXX (13 цифр) → 380XXXXXXXXX (12 цифр)
+    - 380XXXXXXXXX → 380XXXXXXXXX (без змін)
+    - 0XXXXXXXXX (10 цифр) → 380XXXXXXXXX (12 цифр)
+    - XXXXXXXXX (9 цифр) → 380XXXXXXXXX (12 цифр)
+
+    Email: приводиться до lowercase.
 
     Args:
-        contact: Телефон или email
+        contact: Телефон або email для нормалізації
 
     Returns:
-        Нормализованный контакт
+        Нормалізований контакт або None якщо не вдалося нормалізувати
+
+    Examples:
+        >>> normalize_contact("0380501234567")  # 13 цифр
+        "380501234567"
+        >>> normalize_contact("380501234567")
+        "380501234567"
+        >>> normalize_contact("0501234567")  # 10 цифр
+        "380501234567"
+        >>> normalize_contact("501234567")  # 9 цифр
+        "380501234567"
+        >>> normalize_contact("user@example.com")
+        "user@example.com"
     """
     if not contact:
         return None
 
-    contact = str(contact).strip()
+    contact = contact.strip()
 
-    # Если это email
+    if not contact:
+        return None
+
+    # Email: приводимо до lowercase
     if "@" in contact:
         return contact.lower()
 
-    # Если это телефон - убираем все кроме цифр
+    # Телефон: залишаємо тільки цифри
     digits = ''.join(c for c in contact if c.isdigit())
 
     if not digits:
+        logger.warning(f"Не вдалося нормалізувати контакт (немає цифр): {contact}")
         return None
 
-    # Умная нормализация украинских номеров
-    # Варианты: 380501234567, 0501234567, 501234567
+    # 0380XXXXXXXXX → 380XXXXXXXXX (видаляємо перший 0)
+    if digits.startswith('0380') and len(digits) == 13:
+        normalized = digits[1:13]  # 380XXXXXXXXX (12 цифр)
+        logger.debug(f"Нормалізовано 0380... → {normalized}")
+        return normalized
 
-    # Если номер начинается с 380 (код Украины)
-    if digits.startswith('380'):
-        # Берем 380 + 9 цифр (стандартный формат)
-        if len(digits) >= 12:
-            return digits[:12]  # 380501234567
+    # 380XXXXXXXXX → без змін
+    if digits.startswith('380') and len(digits) == 12:
+        logger.debug(f"Телефон вже нормалізований: {digits}")
         return digits
 
-    # Если номер начинается с 0 (местный формат)
-    elif digits.startswith('0') and len(digits) == 10:
-        # Конвертируем 0501234567 → 380501234567
-        return '380' + digits[1:]
+    # 0XXXXXXXXX → 380XXXXXXXXX
+    if digits.startswith('0') and len(digits) == 10:
+        normalized = '380' + digits[1:]  # 380XXXXXXXXX (12 цифр)
+        logger.debug(f"Нормалізовано 0... → {normalized}")
+        return normalized
 
-    # Если номер без кода страны и без 0 (9 цифр)
-    elif len(digits) == 9:
-        # Конвертируем 501234567 → 380501234567
-        return '380' + digits
+    # XXXXXXXXX → 380XXXXXXXXX
+    if len(digits) == 9:
+        normalized = '380' + digits  # 380XXXXXXXXX (12 цифр)
+        logger.debug(f"Нормалізовано без коду → {normalized}")
+        return normalized
 
-    # Если длина нестандартная - возвращаем как есть
+    # Якщо не підходить під жоден формат - повертаємо як є
+    logger.warning(f"Не вдалося нормалізувати телефон (незрозумілий формат): {contact} -> {digits}")
     return digits
 
 
-def extract_lead_contacts(lead: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+# ============================================================================
+# ІНДЕКСАЦІЯ ВЧИТЕЛІВ З NETHUNT
+# ============================================================================
+
+
+def build_teacher_index(
+    records: List[Dict[str, Any]]
+) -> Dict[str, Dict[str, Any]]:
     """
-    Извлечь телефон и email из field_data лида.
+    Будує індекс вчителів за нормалізованими контактами.
 
-    Args:
-        lead: Лид из Meta API с field_data
-
-    Returns:
-        (phone, email) tuple
-    """
-    field_data = lead.get("field_data", [])
-    phone = None
-    email = None
-
-    for field in field_data:
-        field_name = field.get("name", "").lower()
-        values = field.get("values", [])
-        value = values[0] if values else None
-
-        if not value:
-            continue
-
-        # Поиск телефона
-        if any(keyword in field_name for keyword in ["phone", "телефон", "number"]):
-            phone = normalize_contact(value)
-
-        # Поиск email
-        elif any(keyword in field_name for keyword in ["email", "e-mail", "адрес", "почта"]):
-            email = normalize_contact(value)
-
-    return phone, email
-
-
-def extract_status_from_record(record: Dict[str, Any]) -> Optional[str]:
-    """
-    Извлечь статус из записи NetHunt.
-
-    NetHunt хранит статусы в разных местах:
-    - record.get("status") - объект статуса
-    - record.get("fields", {}).get("Status") - поле статуса
-
-    Args:
-        record: Запись из NetHunt
-
-    Returns:
-        Название статуса или None
-    """
-    # Попытка 1: Прямой статус
-    status_obj = record.get("status", {})
-    if isinstance(status_obj, dict):
-        status_name = status_obj.get("name", "").lower()
-        if status_name:
-            return status_name
-
-    # Попытка 2: Статус в полях
-    fields = record.get("fields", {})
-    for field_name, field_value in fields.items():
-        if "status" in field_name.lower():
-            if isinstance(field_value, dict):
-                return field_value.get("name", "").lower()
-            elif isinstance(field_value, str):
-                return field_value.lower()
-
-    return None
-
-
-def map_nethunt_status_to_column(status_name: Optional[str]) -> str:
-    """
-    Преобразовать статус NetHunt в название столбца таблицы.
-
-    Args:
-        status_name: Название статуса из NetHunt (lowercase)
-
-    Returns:
-        Название столбца таблицы
-    """
-    if not status_name:
-        return "Нові"
-
-    # Прямое сопоставление
-    if status_name in NETHUNT_STATUS_MAPPING:
-        return NETHUNT_STATUS_MAPPING[status_name]
-
-    # Поиск по частичному совпадению
-    for key, value in NETHUNT_STATUS_MAPPING.items():
-        if key in status_name or status_name in key:
-            return value
-
-    # Если не найдено - возвращаем как есть (заглавная буква)
-    return status_name.capitalize()
-
-
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type((
-        requests.exceptions.Timeout,
-        requests.exceptions.ConnectionError,
-        requests.exceptions.HTTPError
-    )),
-    before_sleep=before_sleep_log(logger, logging.WARNING),
-    reraise=True
-)
-def _nethunt_api_call_with_retry(url: str, headers: Dict[str, str], timeout: int) -> requests.Response:
-    """
-    Выполнить HTTP запрос к NetHunt API с retry механизмом.
-
-    Args:
-        url: URL endpoint
-        headers: HTTP заголовки
-        timeout: Timeout в секундах
-
-    Returns:
-        Response объект
-
-    Raises:
-        requests.exceptions.HTTPError: При ошибках HTTP
-        requests.exceptions.Timeout: При timeout
-        requests.exceptions.ConnectionError: При проблемах с соединением
-    """
-    response = requests.get(url, headers=headers, timeout=timeout)
-    response.raise_for_status()
-    return response
-
-
-def _validate_nethunt_changes_response(data: Any) -> bool:
-    """
-    Валидировать структуру ответа NetHunt API для record changes.
-
-    Args:
-        data: Данные из response.json()
-
-    Returns:
-        True если структура валидна, False иначе
-    """
-    # Проверка что это список
-    if not isinstance(data, list):
-        logger.error(f"Invalid NetHunt response: expected list, got {type(data).__name__}")
-        return False
-
-    # Проверка структуры каждого изменения
-    for idx, change in enumerate(data):
-        if not isinstance(change, dict):
-            logger.warning(f"Change #{idx} is not a dict: {type(change).__name__}")
-            continue
-
-        # Обязательные поля
-        required_fields = ["recordId", "time"]
-        missing_fields = [f for f in required_fields if f not in change]
-
-        if missing_fields:
-            logger.warning(f"Change #{idx} missing required fields: {missing_fields}")
-
-    return True
-
-
-def nethunt_get_record_changes(
-    folder_id: str,
-    since_date: Optional[str] = None,
-    limit: Optional[int] = None
-) -> List[Dict[str, Any]]:
-    """
-    Получить историю изменений записей из папки NetHunt.
-
-    Использует endpoint /triggers/record-change/{folder_id} для получения
-    полной истории всех изменений полей.
-
-    Включает:
-    - Retry механизм с exponential backoff (3 попытки)
-    - Валидацию структуры API ответа
-    - Детальное логирование ошибок
-    - Опциональную фильтрацию по дате (для уменьшения объема данных)
-    - Опциональный лимит результатов
-
-    Args:
-        folder_id: ID папки NetHunt
-        since_date: Получить изменения начиная с этой даты (ISO 8601 формат)
-                   Например: "2025-01-01T00:00:00Z"
-        limit: Максимальное количество изменений для возврата
-              (фильтрация после получения от API)
-
-    Returns:
-        Список изменений с структурой:
-        [{
-            "id": "...",
-            "recordId": "ID записи",
-            "time": "2025-10-10T12:00:00Z",
-            "user": "email пользователя",
-            "recordAction": "updated|created|deleted",
-            "fieldActions": [
-                {"field": "status", "oldValue": "new", "newValue": "contacted"}
-            ]
-        }]
-    """
-    if not NETHUNT_AUTH:
-        logger.error("NETHUNT_BASIC_AUTH not configured")
-        return []
-
-    url = f"{NETHUNT_BASE_URL}/triggers/record-change/{folder_id}"
-    headers = {
-        "Authorization": NETHUNT_AUTH,
-        "Accept": "application/json"
+    Структура індексу:
+    {
+        "380501234567": {
+            "id": "nethunt_record_id",
+            "name": "Іван Петров",
+            "email": "ivan@example.com",
+            "phone": "380501234567",
+            "status": "interview_target",  # ключ з NetHunt API
+            "status_column": "Співбесіда (ЦА)",  # назва колонки таблиці
+            "created_at": "2025-10-01T10:00:00Z",
+            # ... інші поля з NetHunt
+        },
+        "ivan@example.com": { ... }  # той же запис, але за email
     }
 
-    try:
-        # Вызов API с retry механизмом
-        response = _nethunt_api_call_with_retry(url, headers, NETHUNT_TIMEOUT)
-
-        # Парсинг JSON
-        try:
-            changes = response.json()
-        except ValueError as e:
-            logger.error(f"Failed to parse NetHunt API response as JSON: {e}")
-            logger.error(f"Response content (first 500 chars): {response.text[:500]}")
-            return []
-
-        # Валидация структуры ответа
-        if not _validate_nethunt_changes_response(changes):
-            logger.error("NetHunt API response validation failed")
-
-            if NETHUNT_STRICT_VALIDATION:
-                # Production режим: зупиняємо виконання
-                logger.critical(
-                    "NETHUNT_STRICT_VALIDATION=true - aborting execution due to invalid response"
-                )
-                return []
-            else:
-                # Development режим: продовжуємо з попередженням
-                logger.warning(
-                    "Continuing with potentially invalid data (NETHUNT_STRICT_VALIDATION=false). "
-                    "Set NETHUNT_STRICT_VALIDATION=true for production."
-                )
-
-        # Фильтрация по дате (если указана)
-        if since_date:
-            original_count = len(changes)
-            changes = [
-                change for change in changes
-                if change.get("time", "") >= since_date
-            ]
-            logger.info(
-                f"Filtered changes by date (since {since_date}): "
-                f"{original_count} -> {len(changes)}"
-            )
-
-        # Ограничение результатов (если указано)
-        if limit and limit > 0:
-            original_count = len(changes)
-            changes = changes[:limit]
-            if original_count > limit:
-                logger.info(f"Limited results from {original_count} to {limit}")
-
-        logger.info(f"Loaded {len(changes)} record changes from NetHunt folder {folder_id}")
-        return changes
-
-    except requests.exceptions.HTTPError as e:
-        logger.error(
-            f"NetHunt API HTTP error: {e.response.status_code}, "
-            f"URL: {url}, "
-            f"Response: {e.response.text[:200] if hasattr(e.response, 'text') else 'N/A'}"
-        )
-        return []
-    except requests.exceptions.Timeout:
-        logger.error(f"NetHunt API timeout after {NETHUNT_TIMEOUT}s, URL: {url}")
-        return []
-    except requests.exceptions.ConnectionError as e:
-        logger.error(f"NetHunt API connection error: {e}, URL: {url}")
-        return []
-    except Exception as e:
-        logger.error(
-            f"Unexpected error in nethunt_get_record_changes: {type(e).__name__}: {e}, "
-            f"URL: {url}",
-            exc_info=True
-        )
-        return []
-
-
-def extract_status_history(record_id: str, all_changes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Извлечь историю изменений статуса для одной записи.
+    ВАЖЛИВО: Якщо у вчителя є і телефон, і email - він буде в індексі
+    по обох ключах (для надійного зіставлення з Meta Ads лідами).
 
     Args:
-        record_id: ID записи (учителя) в NetHunt
-        all_changes: Все изменения из nethunt_get_record_changes()
+        records: Список записів з NetHunt API
 
     Returns:
-        История статусов в хронологическом порядке:
-        [{
-            "time": "2025-10-01T10:00:00Z",
-            "old_status": "new",
-            "new_status": "contacted",
-            "changed_by": "manager@ecademy.com"
-        }]
+        Словник {нормалізований_контакт: дані_вчителя}
     """
-    status_history = []
-
-    for change in all_changes:
-        if change.get("recordId") != record_id:
-            continue
-
-        field_actions = change.get("fieldActions", [])
-
-        for field_action in field_actions:
-            field_name = field_action.get("field", "").lower()
-
-            # Ищем изменения поля статуса
-            if any(keyword in field_name for keyword in ["status", "статус", "stage", "этап"]):
-                status_history.append({
-                    "time": change.get("time"),
-                    "old_status": field_action.get("oldValue"),
-                    "new_status": field_action.get("newValue"),
-                    "changed_by": change.get("user")
-                })
-
-    # Сортируем по времени
-    status_history.sort(key=lambda x: x.get("time", ""))
-    return status_history
-
-
-def build_teacher_index(records: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """
-    Создать индекс учителей (записей NetHunt) по телефону и email для быстрого поиска.
-
-    Args:
-        records: Список записей из NetHunt
-
-    Returns:
-        Словарь {normalized_contact: record}
-    """
-    index = {}
+    index: Dict[str, Dict[str, Any]] = {}
 
     for record in records:
-        fields = record.get("fields", {})
+        record_id = record.get("id")
+        if not record_id:
+            logger.warning("Запис без ID, пропускаємо")
+            continue
 
-        # Индексируем по всем полям, которые могут содержать контакты
-        for field_name, field_value in fields.items():
-            field_name_lower = field_name.lower()
+        # Отримуємо статус з NetHunt
+        status_key = record.get("status", "").lower().replace(" ", "_").replace("-", "_")
+        status_column = NETHUNT_STATUS_MAPPING.get(status_key, "Не розібрані ліди")
 
-            # Индексируем по телефону
-            if any(keyword in field_name_lower for keyword in ["phone", "телефон", "tel", "mobile"]):
-                if field_value:
-                    normalized = normalize_contact(str(field_value))
-                    if normalized:
-                        index[normalized] = record
+        teacher_data = {
+            "id": record_id,
+            "name": record.get("name", ""),
+            "email": record.get("email", ""),
+            "phone": record.get("phone", ""),
+            "status": status_key,
+            "status_column": status_column,
+            "created_at": record.get("created_at"),
+            "updated_at": record.get("updated_at"),
+            # Зберігаємо весь запис для можливих додаткових полів
+            "_raw": record,
+        }
 
-            # Индексируем по email
-            if any(keyword in field_name_lower for keyword in ["email", "почта", "mail"]):
-                if field_value:
-                    normalized = normalize_contact(str(field_value))
-                    if normalized:
-                        index[normalized] = record
+        # Індексуємо по телефону
+        phone = record.get("phone")
+        if phone:
+            normalized_phone = normalize_contact(phone)
+            if normalized_phone:
+                index[normalized_phone] = teacher_data
+                logger.debug(f"Індексовано вчителя по телефону: {normalized_phone} -> {teacher_data['name']}")
 
+        # Індексуємо по email
+        email = record.get("email")
+        if email:
+            normalized_email = normalize_contact(email)
+            if normalized_email:
+                index[normalized_email] = teacher_data
+                logger.debug(f"Індексовано вчителя по email: {normalized_email} -> {teacher_data['name']}")
+
+    logger.info(f"Побудовано індекс вчителів: {len(index)} унікальних контактів з {len(records)} записів")
     return index
 
 
-def extract_contacts_from_campaigns(campaigns_data: Dict[str, Dict[str, Any]]) -> set:
+# ============================================================================
+# ВІДСТЕЖЕННЯ ЛІДІВ ПО КАМПАНІЯХ
+# ============================================================================
+
+
+def extract_contacts_from_campaigns(
+    campaigns_data: Dict[str, Dict[str, Any]]
+) -> Set[str]:
     """
-    Извлечь все уникальные контакты (телефоны и email) из лидов кампаний.
+    Витягує всі унікальні нормалізовані контакти з лідів кампаній Meta Ads.
 
     Args:
-        campaigns_data: Данные от get_leads_for_period() из meta_leads.py
+        campaigns_data: Дані кампаній з Meta Ads
+        {
+            "campaign_id_1": {
+                "name": "Campaign Name",
+                "leads": [
+                    {"phone": "0501234567", "email": "user@example.com"},
+                    ...
+                ]
+            }
+        }
 
     Returns:
-        Множество нормализованных контактов
+        Set нормалізованих контактів (телефони та email)
     """
-    contacts = set()
+    contacts: Set[str] = set()
 
-    for campaign_data in campaigns_data.values():
+    for campaign_id, campaign_data in campaigns_data.items():
         leads = campaign_data.get("leads", [])
 
         for lead in leads:
-            phone, email = extract_lead_contacts(lead)
+            # Витягуємо телефон
+            phone = lead.get("phone") or lead.get("full_phone_number")
             if phone:
-                contacts.add(phone)
-            if email:
-                contacts.add(email)
+                normalized_phone = normalize_contact(phone)
+                if normalized_phone:
+                    contacts.add(normalized_phone)
 
-    logger.info(f"Extracted {len(contacts)} unique contacts from {sum(len(c.get('leads', [])) for c in campaigns_data.values())} leads")
+            # Витягуємо email
+            email = lead.get("email")
+            if email:
+                normalized_email = normalize_contact(email)
+                if normalized_email:
+                    contacts.add(normalized_email)
+
+    logger.info(f"Витягнуто {len(contacts)} унікальних контактів з {len(campaigns_data)} кампаній")
     return contacts
 
 
 def track_campaign_leads(
     campaign_leads: List[Dict[str, Any]],
     teacher_index: Dict[str, Dict[str, Any]],
-    status_histories: Dict[str, List[Dict[str, Any]]],
-    all_status_columns: set
-) -> Dict[str, int]:
+    all_status_columns: Set[str]
+) -> Dict[str, Any]:
     """
-    Подсчитать количество лидов кампании на каждом этапе воронки.
+    Відстежує ліди однієї кампанії в NetHunt CRM.
 
-    ИСПОЛЬЗУЕТ РЕАЛЬНУЮ ИСТОРИЮ СТАТУСОВ из NetHunt API!
+    Inference підхід: рахує ліди в поточному статусі на момент аналізу.
 
     Args:
-        campaign_leads: Список лидов одной кампании из Meta API
-        teacher_index: Индекс учителей {normalized_contact: record}
-        status_histories: Истории статусов {record_id: [status_changes]}
-        all_status_columns: Множество всех возможных названий столбцов статусов
+        campaign_leads: Ліди кампанії з Meta Ads
+        teacher_index: Індекс вчителів за контактами
+        all_status_columns: Всі можливі колонки статусів
 
     Returns:
         {
-            "Кількість лідів": 50,
-            "Нові": 10,
-            "Контакт встановлено": 20,
-            "Кваліфіковані": 15,
-            ...
+            "status_counts": {"Контакт (ЦА)": 5, "Співбесіда (ЦА)": 2, ...},
+            "total_matched": 10,
+            "total_leads": 15
         }
     """
-    # Инициализируем счетчики
-    status_counts = {status_col: 0 for status_col in all_status_columns}
-    status_counts["Кількість лідів"] = len(campaign_leads)
+    # Ініціалізуємо лічильники для всіх статусів
+    status_counts: Dict[str, int] = {status: 0 for status in all_status_columns}
 
-    matched_count = 0
-    not_found_count = 0
+    total_matched = 0
 
     for lead in campaign_leads:
-        # Извлекаем контакты лида
-        phone, email = extract_lead_contacts(lead)
+        # Витягуємо контакти ліда
+        phone = lead.get("phone") or lead.get("full_phone_number")
+        email = lead.get("email")
 
-        # Ищем учителя в индексе
-        teacher_record = None
-        if phone and phone in teacher_index:
-            teacher_record = teacher_index[phone]
-        elif email and email in teacher_index:
-            teacher_record = teacher_index[email]
+        # Шукаємо вчителя в індексі
+        teacher = None
 
-        if teacher_record:
-            matched_count += 1
-            record_id = teacher_record.get("id")
+        if phone:
+            normalized_phone = normalize_contact(phone)
+            if normalized_phone and normalized_phone in teacher_index:
+                teacher = teacher_index[normalized_phone]
+                logger.debug(f"Знайдено вчителя по телефону: {normalized_phone}")
 
-            # Получаем историю статусов для этого учителя
-            history = status_histories.get(record_id, [])
+        if not teacher and email:
+            normalized_email = normalize_contact(email)
+            if normalized_email and normalized_email in teacher_index:
+                teacher = teacher_index[normalized_email]
+                logger.debug(f"Знайдено вчителя по email: {normalized_email}")
 
-            if history:
-                # КЛЮЧОВА РІЗНИЦЯ ВІД ALFACRM INFERENCE ПІДХОДУ:
-                #
-                # AlfaCRM (студенти):
-                # - Inference підхід: відновлюємо шлях з поточного статусу
-                # - Приклад: якщо статус = "Оплата" → інферуємо [Новий, Контакт, Пробний, Оплата]
-                #
-                # NetHunt (вчителі):
-                # - Real history: використовуємо реальну історію змін з API
-                # - Приклад: якщо історія = [New → Contacted → Qualified → Hired]
-                #   то засчитуємо +1 в КОЖЕН стовпець: ["Нові", "Контакт", "Кваліфіковані", "Найнято"]
-                #
-                # Це дає НАКОПИЧУВАЛЬНУ статистику воронки:
-                # - Кожен наступний статус є підмножиною попереднього (Найнято ⊆ Кваліфіковані ⊆ Контакт ⊆ Нові)
-                # - Дозволяє аналізувати конверсію між етапами: (Найнято / Кваліфіковані) * 100%
+        # Якщо знайшли вчителя - рахуємо його статус
+        if teacher:
+            total_matched += 1
+            status_column = teacher.get("status_column", "Не розібрані ліди")
+            status_counts[status_column] += 1
+            logger.debug(f"Лід зіставлено: {phone or email} -> статус '{status_column}'")
 
-                unique_statuses = set()
-                for change in history:
-                    new_status = change.get("new_status", "").lower() if change.get("new_status") else None
-
-                    if new_status:
-                        # Перетворюємо статус NetHunt → назва стовпця таблиці
-                        # Використовуємо NETHUNT_STATUS_MAPPING з settings.py
-                        column_name = map_nethunt_status_to_column(new_status)
-                        unique_statuses.add(column_name)
-
-                # Засчитуємо вчителя в КОЖЕН статус через який він пройшов
-                # (це накопичувальна метрика для аналізу конверсії по етапах)
-                for status_col in unique_statuses:
-                    if status_col not in status_counts:
-                        status_counts[status_col] = 0
-                    status_counts[status_col] += 1
-            else:
-                # Fallback: если нет истории, используем текущий статус
-                status_name = extract_status_from_record(teacher_record)
-                column_name = map_nethunt_status_to_column(status_name)
-
-                if column_name not in status_counts:
-                    status_counts[column_name] = 0
-                status_counts[column_name] += 1
-
-        else:
-            not_found_count += 1
-            # Лиды которые не найдены в CRM считаем как "Нові"
-            status_counts["Нові"] += 1
+    result = {
+        "status_counts": status_counts,
+        "total_matched": total_matched,
+        "total_leads": len(campaign_leads),
+    }
 
     logger.info(
-        f"Teacher campaign tracking: {matched_count} matched, {not_found_count} not found in NetHunt"
+        f"Відстежено кампанію: {total_matched}/{len(campaign_leads)} лідів зіставлено, "
+        f"розподіл по статусах: {sum(1 for c in status_counts.values() if c > 0)} активних статусів"
     )
 
-    return status_counts
+    return result
 
 
 async def track_leads_by_campaigns(
@@ -587,207 +311,152 @@ async def track_leads_by_campaigns(
     folder_id: Optional[str] = None
 ) -> Dict[str, Dict[str, Any]]:
     """
-    Обогатить данные кампаний статистикой по воронке из NetHunt.
+    Обогащує дані кампаній Meta Ads статистикою воронки вчителів з NetHunt CRM.
 
-    ОПТИМИЗАЦИЯ: Загружает только тех учителей, которые есть в лидах кампаний за период.
+    Inference підхід (БЕЗ історії змін):
+    - Завантажує поточні записи з NetHunt
+    - Рахує ліди в поточному статусі
+    - Зіставляє з лідами Meta Ads за контактами
 
     Args:
-        campaigns_data: Данные от get_leads_for_period() из meta_leads.py
-            {
-                "campaign_123": {
-                    "campaign_id": "123",
-                    "campaign_name": "Teacher/...",
-                    "leads": [...]
-                }
-            }
-        folder_id: ID папки в NetHunt (если не указан - берется из env или первая доступная)
+        campaigns_data: Дані кампаній з Meta Ads
+        folder_id: ID папки NetHunt (за замовчуванням з env)
 
     Returns:
+        Збагачені дані кампаній з додатковими полями:
         {
-            "campaign_123": {
-                "campaign_id": "123",
-                "campaign_name": "Teacher/...",
-                "leads_count": 50,
+            "campaign_id": {
+                ...оригінальні дані...,
                 "funnel_stats": {
-                    "Кількість лідів": 50,
-                    "Нові": 10,
-                    "Контакт встановлено": 20,
+                    "Не розібрані ліди": 3,
+                    "Контакт (ЦА)": 5,
+                    "Співбесіда (ЦА)": 2,
+                    "Вчитель ЦА": 1,
                     ...
-                }
+                },
+                "total_matched_leads": 10,
+                "match_rate": 0.67  # 10/15 лідів знайдено в NetHunt
             }
         }
     """
-    # 1. Извлечь контакты из лидов Meta за указанный период
+    logger.info(f"Початок обогащення {len(campaigns_data)} кампаній даними з NetHunt")
+
+    # 1. Витягуємо всі унікальні контакти з лідів кампаній
     lead_contacts = extract_contacts_from_campaigns(campaigns_data)
+    logger.info(f"Витягнуто {len(lead_contacts)} унікальних контактів з Meta Ads лідів")
 
     if not lead_contacts:
-        logger.warning("No contacts found in Meta leads - skipping NetHunt loading")
-        return {}
+        logger.warning("Немає контактів для зіставлення з NetHunt")
+        return campaigns_data
 
-    # 2. Определить folder_id
-    if not folder_id:
-        folder_id = os.getenv("NETHUNT_FOLDER_ID")
-
-    if not folder_id or folder_id == "default":
-        # Получить первую доступную папку
-        try:
-            folders = nethunt_list_folders()
-            if folders:
-                folder_id = folders[0].get("id")
-                logger.info(f"Using NetHunt folder: {folders[0].get('name')} ({folder_id})")
-            else:
-                logger.error("No NetHunt folders found")
-                return {}
-        except Exception as e:
-            logger.error(f"Failed to get NetHunt folders: {e}")
-            return {}
-
-    # 3. Загрузить ИСТОРИЮ изменений записей из NetHunt
-    logger.info(f"Loading record change history from NetHunt folder {folder_id}...")
-
-    # Опциональная фильтрация: загрузить изменения только за последние 90 дней
-    # (можно настроить через ENV переменную для уменьшения нагрузки)
-    since_date = None
-    days_back = os.getenv("NETHUNT_HISTORY_DAYS", None)
-    if days_back:
-        try:
-            from datetime import timedelta
-            since_dt = datetime.now() - timedelta(days=int(days_back))
-            since_date = since_dt.isoformat() + "Z"
-            logger.info(f"Filtering history to last {days_back} days (since {since_date})")
-        except (ValueError, TypeError) as e:
-            logger.warning(f"Invalid NETHUNT_HISTORY_DAYS value: {days_back}, error: {e}")
-
-    all_changes = nethunt_get_record_changes(folder_id, since_date=since_date)
-
-    if not all_changes:
-        logger.warning("No record changes found, falling back to current status only")
-
-    # 4. Построить истории статусов для каждой записи
-    record_ids = set(change.get("recordId") for change in all_changes if change.get("recordId"))
-    status_histories = {}
-
-    for record_id in record_ids:
-        history = extract_status_history(record_id, all_changes)
-        if history:
-            status_histories[record_id] = history
-
-    logger.info(f"Built status history for {len(status_histories)} teachers")
-
-    # 5. Загрузить текущие записи учителей для индексации по контактам
-    logger.info(f"Loading current teacher records from NetHunt folder {folder_id}...")
-
+    # 2. Завантажуємо всі записи вчителів з NetHunt (поточний стан)
     try:
-        all_records = nethunt_list_records(folder_id, limit=1000)
-        logger.info(f"Loaded {len(all_records)} teacher records from NetHunt")
+        all_records = nethunt_list_records(folder_id=folder_id, limit=10000)
+        logger.info(f"Завантажено {len(all_records)} записів з NetHunt")
     except Exception as e:
-        logger.error(f"Failed to load NetHunt records: {e}")
-        return {}
+        logger.error(f"Помилка завантаження записів з NetHunt: {e}")
+        return campaigns_data
 
-    # 6. Построить индекс учителей
+    if not all_records:
+        logger.warning("NetHunt не повернув записів вчителів")
+        return campaigns_data
+
+    # 3. Будуємо індекс вчителів за нормалізованими контактами
     teacher_index = build_teacher_index(all_records)
+    logger.info(f"Побудовано індекс: {len(teacher_index)} унікальних контактів")
 
-    # Фильтруем индекс - оставляем только контакты которые есть в лидах
+    # Фільтруємо індекс: залишаємо тільки тих вчителів, які є в Meta Ads лідах
     filtered_index = {
-        contact: teacher for contact, teacher in teacher_index.items()
+        contact: teacher
+        for contact, teacher in teacher_index.items()
         if contact in lead_contacts
     }
+    logger.info(
+        f"Відфільтровано індекс: {len(filtered_index)}/{len(teacher_index)} вчителів "
+        f"знайдено в Meta Ads лідах"
+    )
 
-    logger.info(f"Filtered teacher index: {len(filtered_index)} matched contacts from {len(teacher_index)} total")
+    if not filtered_index:
+        logger.warning("Жоден вчитель з NetHunt не знайдений серед Meta Ads лідів")
+        return campaigns_data
 
-    # 7. Собрать все уникальные статусы для создания столбцов
-    all_status_columns = set(NETHUNT_STATUS_MAPPING.values())
+    # 4. Збираємо всі унікальні колонки статусів
+    all_status_columns: Set[str] = set(NETHUNT_STATUS_MAPPING.values())
+    logger.info(f"Відстежуємо {len(all_status_columns)} статусних колонок")
 
-    # Добавить реальные статусы из истории
-    for history in status_histories.values():
-        for change in history:
-            new_status = change.get("new_status", "").lower() if change.get("new_status") else None
-            if new_status:
-                column_name = map_nethunt_status_to_column(new_status)
-                all_status_columns.add(column_name)
-
-    # Добавить текущие статусы из данных
-    for record in all_records:
-        status_name = extract_status_from_record(record)
-        if status_name:
-            column_name = map_nethunt_status_to_column(status_name)
-            all_status_columns.add(column_name)
-
-    logger.info(f"Found {len(all_status_columns)} unique status columns")
-
-    # 8. Обработать каждую кампанию
+    # 5. Обробляємо кожну кампанію
     enriched_campaigns = {}
 
     for campaign_id, campaign_data in campaigns_data.items():
         campaign_leads = campaign_data.get("leads", [])
 
-        # Подсчитать статусы для этой кампании ИСПОЛЬЗУЯ отфильтрованный индекс
+        if not campaign_leads:
+            logger.debug(f"Кампанія {campaign_id} не має лідів, пропускаємо")
+            enriched_campaigns[campaign_id] = campaign_data
+            continue
+
+        # Відстежуємо ліди кампанії в NetHunt
         funnel_stats = track_campaign_leads(
             campaign_leads,
             filtered_index,
-            status_histories,
             all_status_columns
         )
 
-        enriched_campaigns[campaign_id] = {
-            "campaign_id": campaign_data.get("campaign_id"),
-            "campaign_name": campaign_data.get("campaign_name"),
-            "leads_count": len(campaign_leads),
-            "funnel_stats": funnel_stats
-        }
+        # Додаємо статистику воронки до кампанії
+        enriched_campaign = campaign_data.copy()
+        enriched_campaign["funnel_stats"] = funnel_stats["status_counts"]
+        enriched_campaign["total_matched_leads"] = funnel_stats["total_matched"]
+        enriched_campaign["match_rate"] = (
+            funnel_stats["total_matched"] / funnel_stats["total_leads"]
+            if funnel_stats["total_leads"] > 0 else 0.0
+        )
 
-    logger.info(f"Enriched {len(enriched_campaigns)} campaigns with NetHunt funnel stats")
+        enriched_campaigns[campaign_id] = enriched_campaign
 
+        logger.info(
+            f"Кампанія {campaign_id}: {funnel_stats['total_matched']}/{funnel_stats['total_leads']} "
+            f"лідів зіставлено ({enriched_campaign['match_rate']:.1%})"
+        )
+
+    logger.info(f"Обогащення завершено: оброблено {len(enriched_campaigns)} кампаній")
     return enriched_campaigns
 
 
-# Дополнительные утилиты для вычисляемых полей
+# ============================================================================
+# ДОПОМІЖНІ ФУНКЦІЇ
+# ============================================================================
 
-def calculate_conversion_rate(funnel_stats: Dict[str, int]) -> float:
+
+async def get_nethunt_folders() -> List[Dict[str, Any]]:
     """
-    Вычислить процент конверсии в найм.
+    Отримує список папок NetHunt.
 
     Returns:
-        Процент конверсии (0-100)
+        Список папок з NetHunt CRM
     """
-    total = funnel_stats.get("Кількість лідів", 0)
-    hired = funnel_stats.get("Найнято", 0)
+    try:
+        folders = nethunt_list_folders()
+        logger.info(f"Отримано {len(folders)} папок з NetHunt")
+        return folders
+    except Exception as e:
+        logger.error(f"Помилка отримання папок NetHunt: {e}")
+        return []
 
-    if total == 0:
-        return 0.0
 
-    return round((hired / total) * 100, 2)
-
-
-def calculate_qualified_percentage(funnel_stats: Dict[str, int]) -> float:
+async def get_nethunt_folder_fields(folder_id: str) -> Dict[str, Any]:
     """
-    Вычислить процент квалифицированных лидов.
+    Отримує схему полів папки NetHunt.
+
+    Args:
+        folder_id: ID папки NetHunt
 
     Returns:
-        Процент квалифицированных (0-100)
+        Схема полів папки
     """
-    total = funnel_stats.get("Кількість лідів", 0)
-    new = funnel_stats.get("Нові", 0)
-    no_answer = funnel_stats.get("Недзвін", 0)
-
-    if total == 0:
-        return 0.0
-
-    qualified = total - new - no_answer
-    return round((qualified / total) * 100, 2)
-
-
-def calculate_interview_conversion(funnel_stats: Dict[str, int]) -> float:
-    """
-    Вычислить конверсию из проведенной собеседования в найм.
-
-    Returns:
-        Процент конверсии (0-100)
-    """
-    interview_completed = funnel_stats.get("Співбесіда проведена", 0)
-    hired = funnel_stats.get("Найнято", 0)
-
-    if interview_completed == 0:
-        return 0.0
-
-    return round((hired / interview_completed) * 100, 2)
+    try:
+        fields = nethunt_folder_fields(folder_id)
+        logger.info(f"Отримано схему полів для папки {folder_id}")
+        return fields
+    except Exception as e:
+        logger.error(f"Помилка отримання схеми полів NetHunt: {e}")
+        return {}

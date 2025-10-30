@@ -40,6 +40,7 @@ from .services import nethunt_tracking
 from .services import alfacrm_tracking
 from .services import meta_leads
 from .services import campaign_formatter
+from .services import teachers_formatter
 from sqlalchemy.orm import Session
 
 
@@ -1654,6 +1655,7 @@ async def get_meta_data(
 
         # 6) Формируем данные для вкладки ВЧИТЕЛІ з інтеграцією NetHunt tracking
         teachers_data = []
+        teachers_excel_rows = []
 
         # Отримуємо трекінг даних для вчителів з NetHunt
         teachers_tracking = {}
@@ -1704,37 +1706,21 @@ async def get_meta_data(
                 else:
                     logger.warning(f"[TEACHERS]   No teacher campaigns found! Check if keywords match any campaign names.")
 
-                # Завантажуємо історію змін з NetHunt
-                from services.nethunt_tracking import (
-                    nethunt_get_record_changes,
-                    extract_status_history,
-                    build_teacher_index
-                )
-                from connectors.crm import nethunt_list_records
-
-                # Завантажуємо всю історію змін
-                all_changes = nethunt_get_record_changes(nh_folder)
-                logger.info(f"Loaded {len(all_changes)} record changes from NetHunt")
-
-                # Будуємо історії статусів
-                record_ids = set(change.get("recordId") for change in all_changes if change.get("recordId"))
-                for record_id in record_ids:
-                    history = extract_status_history(record_id, all_changes)
-                    if history:
-                        teacher_status_histories[record_id] = history
-                logger.info(f"Built status history for {len(teacher_status_histories)} teachers")
-
-                # Завантажуємо поточні записи вчителів
-                all_records = nethunt_list_records(nh_folder, limit=1000)
-                teacher_index = build_teacher_index(all_records)
-                logger.info(f"Built teacher index with {len(teacher_index)} contact entries")
-
-                # Трекінг через NetHunt з real history підходом
+                # Трекінг через NetHunt з inference підходом (БЕЗ історії)
                 teachers_tracking = await nethunt_tracking.track_leads_by_campaigns(
                     campaigns_data=teacher_campaigns,
                     folder_id=nh_folder
                 )
                 logger.info(f"Loaded teacher tracking for {len(teachers_tracking)} campaigns")
+
+                # Форматування для Excel експорту (49 колонок A-AX)
+                teachers_excel_rows = teachers_formatter.transform_enriched_teachers_to_excel_rows(
+                    enriched_campaigns=teachers_tracking,
+                    analysis_date=datetime.now().strftime("%d.%m.%Y"),
+                    date_range=f"{start_date} - {end_date}",
+                    facebook_ads_url=f"https://facebook.com/ads/manager/account/{settings.META_AD_ACCOUNT_ID.replace('act_', '')}"
+                )
+                logger.info(f"Formatted {len(teachers_excel_rows)} teacher rows for Excel export")
             else:
                 logger.warning("META_PAGE_ID, META_PAGE_ACCESS_TOKEN або NETHUNT_FOLDER_ID не налаштовані")
         except Exception as e:
@@ -1749,81 +1735,34 @@ async def get_meta_data(
             is_teacher_campaign = any(keyword.strip() in campaign_name for keyword in keywords_teachers)
 
             if is_teacher_campaign:
-                # Отримуємо статистику воронки для цієї кампанії
+                # Отримуємо статистику воронки для цієї кампанії (inference підхід)
                 campaign_tracking = teachers_tracking.get(f"campaign_{campaign_id}", {})
                 funnel_stats = campaign_tracking.get("funnel_stats", {})
 
-                # Базові показники
-                leads_count_alfacrm = int(funnel_stats.get("Кількість лідів", 0)) if funnel_stats.get("Кількість лідів") else 0  # З AlfaCRM (для Phase 2)
-                leads_count = int(insight.get("leads_count_fb", 0))  # З Facebook (Phase 1)
+                # Базові показники з Meta API
+                total_matched = campaign_tracking.get("total_matched_leads", 0)
+                leads_count = int(insight.get("leads_count_fb", 0))  # З Facebook
                 budget = float(insight.get("spend", 0))
 
-                # Маппінг статусів NetHunt на поля endpoint (основні 9 статусів)
-                new_leads = funnel_stats.get("Нові", 0)
-                contact_established = funnel_stats.get("Контакт встановлено", 0)
-                qualified = funnel_stats.get("Кваліфіковані", 0)
-                interview_scheduled = funnel_stats.get("Співбесіда призначена", 0)
-                interview_completed = funnel_stats.get("Співбесіда проведена", 0)
-                offer_sent = funnel_stats.get("Офер відправлено", 0)
-                hired = funnel_stats.get("Найнято", 0)
-                rejected = funnel_stats.get("Відмова", 0)
-                no_answer = funnel_stats.get("Недзвін", 0)
-
-                # Цільові/нецільові (базова логіка - можна уточнити у клієнта)
-                target_leads = contact_established  # Всі хто встановив контакт
-                non_target_leads = new_leads + no_answer  # Нові + недзвін
-
-                # Конверсії
-                conv_lead_to_interview = round((interview_completed / leads_count * 100), 2) if leads_count > 0 else 0
-                conv_interview_to_hire = round((hired / interview_completed * 100), 2) if interview_completed > 0 else 0
-
-                # Відсотки
-                percent_target = round((target_leads / leads_count * 100), 2) if leads_count > 0 else 0
-                percent_non_target = round((non_target_leads / leads_count * 100), 2) if leads_count > 0 else 0
-
-                # Ціна за ліда
-                price_per_lead = round((budget / leads_count), 2) if leads_count > 0 else 0
-                price_per_target_lead = round((budget / target_leads), 2) if target_leads > 0 else 0
-
-                # Формуємо базовий словник з Meta даними та розрахунками
+                # Формуємо базовий словник тільки з Meta даними
+                # Всі метрики і розрахунки будуть в teachers_formatter
                 teacher_record = {
                     "campaign_name": insight.get("campaign_name", ""),
+                    "campaign_id": campaign_id,
                     "campaign_link": f"https://facebook.com/ads/manager/campaigns/edit/{campaign_id}",
                     "analysis_date": datetime.now().strftime("%Y-%m-%d"),
                     "period": f"{start_date} - {end_date}",
                     "budget": budget,
-                    "location": insight.get("location", ""),  # Локація з таргетингу Facebook
+                    "location": insight.get("location", ""),
                     "leads_count": leads_count,
-                    "leads_check": leads_count,
-                    "new_leads": new_leads,
-                    "contact_established": contact_established,
-                    "qualified": qualified,
-                    "interview_scheduled": interview_scheduled,
-                    "interview_completed": interview_completed,
-                    "offer_sent": offer_sent,
-                    "hired": hired,
-                    "rejected": rejected,
-                    "no_answer": no_answer,
-                    "target_leads": target_leads,
-                    "non_target_leads": non_target_leads,
-                    "conversion_hired": round((hired / leads_count * 100), 2) if leads_count > 0 else 0,
-                    "conversion_qualified": round((qualified / leads_count * 100), 2) if leads_count > 0 else 0,
-                    "conversion_lead_to_interview": conv_lead_to_interview,
-                    "conversion_interview_to_hire": conv_interview_to_hire,
-                    "percent_target": percent_target,
-                    "percent_non_target": percent_non_target,
-                    "price_per_lead": price_per_lead,
-                    "price_per_target_lead": price_per_target_lead,
-                    "campaign_status": "active"  # Можна додати логіку визначення статусу
+                    "total_matched_leads": total_matched,
+                    "match_rate": campaign_tracking.get("match_rate", 0.0),
+                    "campaign_status": "active"
                 }
 
-                # КРИТИЧНО ВАЖЛИВО: Додаємо ВСІ NetHunt статуси з funnel_stats
-                # Це дозволяє frontend відобразити повну journey вчителя через всі статуси
-                # Статуси динамічно виявляються з реальних даних NetHunt API (не фіксований список)
+                # Додаємо ВСІ 26 статусів NetHunt з funnel_stats (inference підхід)
+                # Статуси автоматично додаються з реальних даних NetHunt
                 for status_name, status_count in funnel_stats.items():
-                    # Перетворюємо назву статусу на ключ для словника
-                    # Наприклад: "Контакт встановлено" → "status_contact_established"
-                    # Зберігаємо оригінальну назву як є, frontend буде використовувати її як динамічний ключ
                     teacher_record[status_name] = status_count
 
                 teachers_data.append(teacher_record)
@@ -2388,26 +2327,45 @@ async def export_meta_excel(request: Request, payload: Dict[str, Any]):
                         cell = ws_students.cell(row=row_idx, column=col_idx)
                         cell.alignment = Alignment(wrap_text=True, vertical="top")
 
-        # Лист 3: Вчителі
+        # Лист 3: Вчителі (49 колонок A-AX)
         ws_teachers = wb.create_sheet("Вчителі")
-        if teachers_data:
-            # ИСПРАВЛЕНО: Используем TEACHERS_EXPORT_ORDER для правильного порядка колонок
-            teachers_headers_en = TEACHERS_EXPORT_ORDER
-            teachers_headers_uk = [TEACHERS_COLUMN_NAMES.get(h, h) for h in teachers_headers_en]
-            ws_teachers.append(teachers_headers_uk)
+        if teachers_excel_rows:
+            # Порядок колонок A-AX згідно з 49-колонковою специфікацією
+            teachers_columns_order = [
+                "Назва реклами", "Посилання на рекламну компанію", "Дата аналізу", "Період аналізу",
+                "Витрачений бюджет в $", "Місце знаходження", "Кількість лідів",
+                "Перевірка лідів автоматичний",
+                "Не розібрані ліди", "Взяті в роботу", "Контакт (ЦА)", "НЕ дозвон (не ЦА)",
+                "Співбесіда (ЦА)", "СП проведено (ЦА)", "Не з'явився на СП",
+                "Завуч затвердив кандидата (в процесі опрацювання) ЦА",
+                "Завуч не затвердив кандидата (відмовився) ЦА",
+                "Переговори (в процесі опрацювання) ЦА", "Стажування ЦА", "Не має учнів ЦА", "Вчитель ЦА",
+                "Втрачений (відмовився) ЦА", "Резерв стажування (в процесі опрацювання) ЦА",
+                "Резерв дзвінок (в процесі опрацювання) ЦА", "Офбординг (відмовився) ЦА",
+                "Звільнився (відмовився) ЦА", "Втрачений не цільовий (не цільовий) НЕ ЦА",
+                "Втрачений недозвон (не цільовий) НЕ ЦА", "Втрачений не актуально (не цільовий) НЕ ЦА",
+                "Втрачений мала зп (відмовився) ЦА", "Втрачений назавжди (не цільовий) НЕ ЦА",
+                "Втрачений перевірити Вайбер (не цільовий) НЕ ЦА", "Втрачений ігнорує (відмовився) ЦА",
+                "Кількість прийшов на співбесіду", "Кількість які не потрапили в Бот ТГ",
+                "Кількість відмовився загалом", "Кількість в процесі опрацювання загалом",
+                "Кількість на етапі Стажування", "Кількість цільових лідів", "Кількість не цільових лідів",
+                "Конверсія відмов %", "Конверсія в опрацюванні %", "Конверсія з ліда у СП %",
+                "Конверсія з ліда у стажера %", "Конверсія з прийшов на співбесіду в стажування %",
+                "% цільових лідів", "% не цільових лідів",
+                "Ціна в $ за ліда", "Ціна в $ за цільового ліда",
+                "Статус рекламної кампанії"
+            ]
 
-            for col_idx, header in enumerate(teachers_headers_uk, 1):
+            ws_teachers.append(teachers_columns_order)
+
+            for col_idx in range(1, len(teachers_columns_order) + 1):
                 cell = ws_teachers.cell(row=1, column=col_idx)
                 cell.font = Font(bold=True, color="FFFFFF")
                 cell.fill = PatternFill(start_color="FFC000", end_color="FFC000", fill_type="solid")
                 cell.alignment = Alignment(horizontal="center", vertical="center")
 
-            # ИСПРАВЛЕНО: Обходим колонки в правильном порядке TEACHERS_EXPORT_ORDER
-            for row_data in teachers_data:
-                formatted_row = []
-                for key in teachers_headers_en:
-                    value = row_data.get(key)
-                    formatted_row.append(value)
+            for row_data in teachers_excel_rows:
+                formatted_row = [row_data.get(col, "") for col in teachers_columns_order]
                 ws_teachers.append(formatted_row)
 
         # Зберігаємо у тимчасовий файл

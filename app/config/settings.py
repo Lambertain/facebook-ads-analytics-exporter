@@ -10,18 +10,56 @@ from typing import Dict
 # NetHunt CRM Configuration
 # ============================================================================
 
-# NetHunt Status Mapping - маппінг статусів NetHunt в назви стовпців таблиці
-# ВАЖЛИВО: Ці статуси потрібно уточнити у клієнта після отримання реальних даних
+# NetHunt Status Mapping для вчителів - маппінг статусів NetHunt в назви стовпців таблиці
+# Базується на 49-колонковій специфікації (колонки I-AG)
+# ВАЖЛИВО: Ці статуси потрібно уточнити у клієнта після отримання реальних даних NetHunt
 NETHUNT_STATUS_MAPPING: Dict[str, str] = {
-    "new": "Нові",
-    "contacted": "Контакт встановлено",
-    "qualified": "Кваліфіковані",
-    "interview_scheduled": "Співбесіда призначена",
-    "interview_completed": "Співбесіда проведена",
-    "offer_sent": "Офер відправлено",
-    "hired": "Найнято",
-    "rejected": "Відмова",
-    "no_answer": "Недзвін",
+    # === ЛІДИ В ПРОЦЕСІ ОПРАЦЮВАННЯ (Колонки I-U) ===
+
+    # Початкові статуси
+    "unprocessed": "Не розібрані ліди",  # Column I
+    "in_work": "Взяті в роботу",  # Column J
+
+    # Контакт та дзвони
+    "contact_target": "Контакт (ЦА)",  # Column K
+    "no_answer_non_target": "НЕ дозвон (не ЦА)",  # Column L
+
+    # Співбесіди
+    "interview_target": "Співбесіда (ЦА)",  # Column M
+    "interview_done_target": "СП проведено (ЦА)",  # Column N
+    "interview_no_show": "Не з'явився на СП",  # Column O
+
+    # Затвердження завучем
+    "zavuch_approved": "Завуч затвердив кандидата (в процесі опрацювання) ЦА",  # Column P
+    "zavuch_rejected": "Завуч не затвердив кандидата (відмовився) ЦА",  # Column Q
+
+    # Переговори та стажування
+    "negotiation": "Переговори (в процесі опрацювання) ЦА",  # Column R
+    "internship": "Стажування ЦА",  # Column S
+    "no_students": "Не має учнів ЦА",  # Column T
+
+    # Фінальний успішний статус
+    "teacher": "Вчитель ЦА",  # Column U - FINAL SUCCESS
+
+    # === КАТЕГОРІЇ ВТРАТ ТА ВІДМОВ (Колонки V-AG) ===
+
+    # Втрати цільової аудиторії
+    "lost_rejected_target": "Втрачений (відмовився) ЦА",  # Column V
+    "reserve_internship": "Резерв стажування (в процесі опрацювання) ЦА",  # Column W
+    "reserve_call": "Резерв дзвінок (в процесі опрацювання) ЦА",  # Column X
+    "offboarding_rejected": "Офбординг (відмовився) ЦА",  # Column Y
+    "quit_rejected": "Звільнився (відмовився) ЦА",  # Column Z
+
+    # Втрати нецільової аудиторії
+    "lost_non_target": "Втрачений не цільовий (не цільовий) НЕ ЦА",  # Column AA
+    "lost_no_answer_non_target": "Втрачений недозвон (не цільовий) НЕ ЦА",  # Column AB
+    "lost_not_relevant": "Втрачений не актуально (не цільовий) НЕ ЦА",  # Column AC
+
+    # Специфічні причини втрат
+    "lost_low_salary": "Втрачений мала зп (відмовився) ЦА",  # Column AD
+    "lost_forever": "Втрачений назавжди (не цільовий) НЕ ЦА",  # Column AE
+    "lost_check_viber": "Втрачений перевірити Вайбер (не цільовий) НЕ ЦА",  # Column AF
+    "lost_ignores": "Втрачений ігнорує (відмовився) ЦА",  # Column AG
 }
 
 # NetHunt API Configuration
