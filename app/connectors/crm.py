@@ -20,6 +20,31 @@ CRM_TIMEOUT = int(os.getenv("CRM_API_TIMEOUT", "15"))
 CRM_MAX_RETRIES = int(os.getenv("CRM_API_MAX_RETRIES", "2"))
 
 
+def _get_branch_ids() -> List[int]:
+    """
+    Get list of branch_ids from environment variables.
+
+    Returns:
+        List of branch IDs to filter in AlfaCRM API
+
+    Priority:
+        1. ALFACRM_BRANCH_IDS (comma-separated: "1,3") -> [1, 3]
+        2. ALFACRM_COMPANY_ID (single value: "1") -> [1]
+
+    Raises:
+        RuntimeError: If neither variable is set
+    """
+    branch_ids_str = os.getenv("ALFACRM_BRANCH_IDS")
+    if branch_ids_str:
+        return [int(x.strip()) for x in branch_ids_str.split(",")]
+
+    company_id = os.getenv("ALFACRM_COMPANY_ID")
+    if company_id:
+        return [int(company_id)]
+
+    raise RuntimeError("Neither ALFACRM_BRANCH_IDS nor ALFACRM_COMPANY_ID is set")
+
+
 async def enrich_leads_with_status(leads: List[Dict[str, Any]], provider: str) -> List[Dict[str, Any]]:
     """Attach CRM status to each lead with graceful degradation.
 
@@ -554,12 +579,10 @@ def alfacrm_list_students(page: int = 1, page_size: int = 200) -> Dict[str, Any]
     """Fetch students list from AlfaCRM. Uses customer/index with branch_ids filter."""
     token = alfacrm_auth_get_token()
     base_url = os.getenv("ALFACRM_BASE_URL")
-    company_id = os.getenv("ALFACRM_COMPANY_ID")
-    if not company_id:
-        raise RuntimeError("ALFACRM_COMPANY_ID is not set")
+    branch_ids = _get_branch_ids()
     url = base_url.rstrip('/') + "/v2api/customer/index"
     payload = {
-        "branch_ids": [int(company_id)],
+        "branch_ids": branch_ids,
         "page": page,
         "page_size": page_size,
     }
@@ -569,4 +592,51 @@ def alfacrm_list_students(page: int = 1, page_size: int = 200) -> Dict[str, Any]
         return resp.json()
     except Exception as e:
         logger.error(f"AlfaCRM list students failed: {type(e).__name__}: {e}")
+        raise
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((requests.exceptions.Timeout, requests.exceptions.ConnectionError)),
+    before_sleep=before_sleep_log(logger, logging.WARNING)
+)
+def alfacrm_list_all_leads(page: int = 1, page_size: int = 500, is_study: int = 0) -> Dict[str, Any]:
+    """
+    Fetch ALL leads from AlfaCRM (active + archived).
+    Uses customer/index with removed=1 parameter.
+
+    Args:
+        page: Page number for pagination
+        page_size: Records per page (default 500 for efficiency)
+        is_study: 0 for leads only, 1 for students only, 2 for combined (default 0)
+
+    Returns:
+        Response dict with 'items' list containing all leads (active + archived)
+
+    Note:
+        removed parameter values:
+        - 0: only active (default in API)
+        - 1: active + archived (used here)
+        - 2: only archived
+    """
+    token = alfacrm_auth_get_token()
+    base_url = os.getenv("ALFACRM_BASE_URL")
+    branch_ids = _get_branch_ids()
+
+    url = base_url.rstrip('/') + "/v2api/customer/index"
+    payload = {
+        "branch_ids": branch_ids,
+        "is_study": is_study,
+        "removed": 1,  # KEY: Get both active and archived leads
+        "page": page,
+        "page_size": page_size,
+    }
+
+    try:
+        resp = requests.post(url, headers={"X-ALFACRM-TOKEN": token}, json=payload, timeout=CRM_TIMEOUT)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        logger.error(f"AlfaCRM list all leads failed: {type(e).__name__}: {e}")
         raise

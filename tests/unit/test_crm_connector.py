@@ -308,7 +308,7 @@ class TestAlfaCRMHelpers:
         mock_auth.return_value = "test_token"
 
         # Act & Assert
-        with pytest.raises(RuntimeError, match="ALFACRM_COMPANY_ID is not set"):
+        with pytest.raises(RuntimeError, match="Neither ALFACRM_BRANCH_IDS nor ALFACRM_COMPANY_ID is set"):
             crm.alfacrm_list_students()
 
     @patch.dict('os.environ', {

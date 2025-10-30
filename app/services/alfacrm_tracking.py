@@ -17,7 +17,7 @@ import sys
 # Добавляем путь к app для импорта connectors
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from connectors.crm import alfacrm_list_students
+from connectors.crm import alfacrm_list_students, alfacrm_list_all_leads
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +38,10 @@ ALFACRM_STATUS_TO_GROUP = {
     # Не розібраний
     13: "Не розібраний",
 
+    # Вст контакт невідомо
+    1: "Вст контакт невідомо",
+
     # Встановлено контакт (ЦА)
-    1: "Встановлено контакт (ЦА)",
     32: "Встановлено контакт (ЦА)",
     43: "Встановлено контакт (ЦА)",
     22: "Встановлено контакт (ЦА)",
@@ -609,7 +611,7 @@ async def track_leads_by_campaigns(
 
     while True:
         try:
-            response = alfacrm_list_students(page=page, page_size=page_size)
+            response = alfacrm_list_all_leads(page=page, page_size=page_size)
             students = response.get("items", [])
 
             if not students:

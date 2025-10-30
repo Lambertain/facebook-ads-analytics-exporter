@@ -144,7 +144,7 @@ def transform_enriched_campaigns_to_excel_rows(
 def _calculate_verification_total(funnel: Dict[str, int]) -> int:
     """
     Колонка 8: Перевірка лідів автоматичний
-    Формула: сумма колонок 9-18
+    Формула: сумма колонок 9-11, 14-18 (БЕЗ 12 и 13 согласно спецификации)
     """
     return (
         funnel.get("Не розібраний", 0) +
